@@ -818,12 +818,29 @@ python scripts/monitoring_scheduler.py
 
 ---
 
+## Typowe problemy i rozwiązania
+
+| Problem | Przyczyna | Rozwiązanie |
+|---------|-----------|-------------|
+| PSI zawsze = 0 | Dane referencyjne i bieżące są identyczne | Upewnij się, że używasz różnych zbiorów danych (trening vs produkcja) |
+| KS test wykrywa drift przy małych próbkach | Test jest zbyt czuły dla dużych zbiorów | Zwiększ próg p-value lub użyj PSI jako głównej metryki |
+| Prometheus nie zbiera metryk | Zły port lub ścieżka `/metrics` | Sprawdź `scrape_configs` w `prometheus.yml` i czy serwer metryk działa |
+| Grafana nie widzi Prometheus | Zły URL data source | Użyj `http://prometheus:9090` (nazwa kontenera w docker-compose) |
+| Fałszywe alarmy dryfu | Sezonowość lub normalna zmienność | Wydłuż okno czasowe alertu (np. `for: 1h` zamiast `for: 5m`) |
+
+> 💡 **Wskazówka:** Testuj system monitoringu na syntetycznych danych z kontrolowanym dryftem — to pozwala zweryfikować, czy alerty wyzwalają się poprawnie, zanim wdrożysz na produkcję.
+
+> 💡 **Wskazówka:** Zapisuj dane referencyjne (rozkłady z treningu) jako artefakt modelu w MLflow — dzięki temu każda wersja modelu ma własne dane referencyjne do porównania.
+
+---
+
 ## Zadania do samodzielnego wykonania
 
 1. **Dodaj monitoring predykcji** – śledź rozkład predykcji modelu (nie tylko cech wejściowych).
 2. **Zaimplementuj Chi-square test** dla zmiennych kategorycznych (np. `num_products`).
 3. **Stwórz dashboard Grafana** z panelami: PSI per cecha, latencja p95, error rate.
 4. **Napisz test** sprawdzający, że `MonitoringScheduler` wyzwala retraining przy silnym dryfcie.
+5. **Dodaj wykrywanie concept drift** — porównaj metryki modelu (AUC) na danych z ostatniego tygodnia vs dane treningowe.
 
 ## Pytania kontrolne
 
@@ -831,12 +848,13 @@ python scripts/monitoring_scheduler.py
 2. Kiedy PSI > 0.2 jest poważnym problemem, a kiedy można je zignorować?
 3. Dlaczego monitorujemy rozkład predykcji nawet gdy nie mamy etykiet?
 4. Jak uniknąć fałszywych alarmów w systemie monitoringu?
+5. Dlaczego warto przechowywać dane referencyjne jako artefakt modelu?
 
 ## Podsumowanie
 
 W tym laboratorium:
 - ✅ Zaimplementowałeś monitor dryfu z KS test i PSI
-- ✅ Zasymulowałeś różne scenariusze dryfu danych
+- ✅ Zasymulowałeś różne scenariusze dryfu danych (nagły, stopniowy, sezonowy)
 - ✅ Skonfigurowałeś eksport metryk do Prometheus
-- ✅ Uruchomiłeś Grafana do wizualizacji metryk
-- ✅ Zbudowałeś scheduler monitoringu z automatycznym retreaningiem
+- ✅ Uruchomiłeś Grafana do wizualizacji metryk ML
+- ✅ Zbudowałeś scheduler monitoringu z automatycznym retrainingiem

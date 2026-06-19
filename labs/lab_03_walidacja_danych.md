@@ -803,12 +803,28 @@ pytest tests/data/ -v --tb=short
 
 ---
 
+## Typowe problemy i rozwiązania
+
+| Problem | Przyczyna | Rozwiązanie |
+|---------|-----------|-------------|
+| Walidacja przepuszcza błędne dane | Zbyt łagodne reguły (np. wiek 0-200) | Zaostrz zakresy na podstawie danych treningowych |
+| Zbyt wiele false positive w anomaliach | Zbyt niski próg Z-score (np. 2.0) | Zwiększ próg do 3.0-4.0 lub użyj IQR z mnożnikiem 3.0 |
+| Feature Store zwraca stare cechy | Brak aktualizacji po zmianie danych | Dodaj timestamp do cech i sprawdzaj aktualność |
+| `dvc repro` nie uruchamia walidacji | Brak zależności w `dvc.yaml` | Upewnij się, że `validate` zależy od `data/processed/train.parquet` |
+
+> 💡 **Wskazówka:** Zacznij od prostych reguł walidacji (schemat, zakresy, null) i stopniowo dodawaj bardziej zaawansowane (rozkłady statystyczne, korelacje między cechami). Zbyt skomplikowana walidacja na początku spowalnia rozwój.
+
+> 💡 **Wskazówka:** Zapisuj statystyki danych referencyjnych (mean, std, percentyle) jako artefakt modelu — będą potrzebne do monitoringu dryfu w produkcji.
+
+---
+
 ## Zadania do samodzielnego wykonania
 
 1. **Dodaj regułę walidacji** sprawdzającą, że `balance` jest skorelowane z `is_active` (klienci nieaktywni powinni mieć saldo = 0).
 2. **Rozszerz Feature Store** o metodę `get_training_dataset()` łączącą cechy z wielu grup.
 3. **Napisz test** dla `StatisticalAnomalyDetector` sprawdzający, że wykrywa wartości odstające.
 4. **Dodaj wersjonowanie** do Feature Store – zapisz dwie wersje cech i pobierz starszą.
+5. **Zaimplementuj walidację schematu** — sprawdź, czy nowe dane mają te same kolumny i typy co dane treningowe.
 
 ## Pytania kontrolne
 
@@ -816,12 +832,13 @@ pytest tests/data/ -v --tb=short
 2. Dlaczego Feature Store rozwiązuje problem „training-serving skew"?
 3. Kiedy używać metody IQR, a kiedy Z-score do wykrywania anomalii?
 4. Jak zintegrować walidację danych z pipeline'em CI/CD?
+5. Dlaczego warto zapisywać statystyki danych referencyjnych jako artefakt modelu?
 
 ## Podsumowanie
 
 W tym laboratorium:
 - ✅ Zbudowałeś framework walidacji danych z regułami i raportami
 - ✅ Napisałeś testy jednostkowe dla walidatora
-- ✅ Zaimplementowałeś detektor anomalii statystycznych
+- ✅ Zaimplementowałeś detektor anomalii statystycznych (Z-score, IQR)
 - ✅ Zbudowałeś prosty Feature Store z wersjonowaniem
 - ✅ Zintegrowałeś walidację z pipeline'em DVC

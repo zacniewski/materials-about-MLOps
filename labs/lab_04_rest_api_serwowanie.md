@@ -749,12 +749,30 @@ python scripts/benchmark_api.py
 
 ---
 
+## Typowe problemy i rozwiązania
+
+| Problem | Przyczyna | Rozwiązanie |
+|---------|-----------|-------------|
+| `422 Unprocessable Entity` | Dane nie pasują do schematu Pydantic | Sprawdź typy i zakresy pól w żądaniu JSON |
+| `503 Service Unavailable` | Model nie jest załadowany | Sprawdź ścieżkę do modelu i logi startu aplikacji |
+| Docker build trwa długo | Brak cache warstw | Kopiuj `requirements.txt` przed kodem źródłowym |
+| Wysoka latencja w Dockerze | Za mało workerów uvicorn | Zwiększ `--workers` (reguła: 2 × CPU + 1) |
+| Testy nie widzą modelu | Brak fixture z modelem testowym | Użyj `@pytest.fixture` do tworzenia modelu demo |
+| `Connection refused` w benchmarku | Serwis nie jest uruchomiony | Uruchom `uvicorn` w osobnym terminalu przed benchmarkiem |
+
+> 💡 **Wskazówka:** Używaj `uvicorn main:app --reload` podczas developmentu — serwer automatycznie restartuje się po zmianach w kodzie. Na produkcji **nigdy** nie używaj `--reload`.
+
+> 💡 **Wskazówka:** Dodaj endpoint `/docs` (automatycznie generowany przez FastAPI) do dokumentacji API — klienci mogą testować endpointy bezpośrednio w przeglądarce.
+
+---
+
 ## Zadania do samodzielnego wykonania
 
 1. **Dodaj endpoint** `GET /predict/history/{customer_id}` zwracający historię predykcji dla klienta.
 2. **Dodaj autentykację** API Key – żądania bez nagłówka `X-API-Key` powinny zwracać 401.
 3. **Napisz test** sprawdzający, że batch predykcja jest szybsza niż N pojedynczych predykcji.
 4. **Dodaj middleware** logujący każde żądanie (metoda, ścieżka, status, czas).
+5. **Dodaj wersjonowanie API** — utwórz router `/v1/predict` i `/v2/predict` z różnymi schematami odpowiedzi.
 
 ## Pytania kontrolne
 
@@ -762,11 +780,12 @@ python scripts/benchmark_api.py
 2. Jaka jest różnica między `TestClient` a prawdziwym klientem HTTP?
 3. Kiedy warto używać batch API zamiast pojedynczych żądań?
 4. Co robi `HEALTHCHECK` w Dockerfile i dlaczego jest ważny?
+5. Dlaczego na produkcji nie używamy flagi `--reload` w uvicorn?
 
 ## Podsumowanie
 
 W tym laboratorium:
 - ✅ Zbudowałeś REST API z FastAPI z walidacją Pydantic
 - ✅ Napisałeś testy jednostkowe i integracyjne dla API
-- ✅ Skonteneryzowałeś serwis w Dockerze
-- ✅ Zmierzyłeś wydajność API (latencja, throughput)
+- ✅ Skonteneryzowałeś serwis w Dockerze z health checkiem
+- ✅ Zmierzyłeś wydajność API (latencja p50/p95/p99, throughput)

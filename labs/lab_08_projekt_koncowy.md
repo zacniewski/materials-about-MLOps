@@ -786,4 +786,32 @@ mindmap
       Smoke tests
 ```
 
+---
+
+## Typowe problemy i rozwiązania
+
+| Problem | Przyczyna | Rozwiązanie |
+|---------|-----------|-------------|
+| Nie wiem od czego zacząć | Zbyt duży zakres projektu | Zacznij od minimalnego MVP: dane → trening → API → test. Dodawaj kolejne elementy iteracyjnie |
+| Pipeline DVC nie działa end-to-end | Brakujące zależności między krokami | Użyj `dvc dag` do wizualizacji i sprawdź, czy wszystkie `deps` i `outs` są poprawne |
+| Docker build się nie udaje | Brakujące zależności systemowe | Dodaj `apt-get install` w Dockerfile dla bibliotek C (np. `libgomp1` dla scikit-learn) |
+| Monitoring nie wykrywa dryfu | Dane referencyjne i produkcyjne są zbyt podobne | Użyj syntetycznych danych z kontrolowanym dryftem do testowania |
+| CI/CD pipeline trwa zbyt długo | Trening na pełnych danych w CI | Użyj podzbioru danych w CI (smoke test), pełny trening uruchamiaj osobno |
+
+> 💡 **Wskazówka:** Traktuj projekt jak prawdziwy produkt — zacznij od MVP, zbieraj feedback, iteruj. Lepiej mieć działający system z 3 komponentami niż niedokończony z 8.
+
+> 💡 **Wskazówka:** Dokumentuj decyzje architektoniczne w README — dlaczego wybrałeś dany model, format danych, strategię wdrożenia. To pomoże przy prezentacji projektu i przyszłym utrzymaniu.
+
+### Checklist przed oddaniem projektu
+
+- [ ] Pipeline DVC działa end-to-end (`dvc repro`)
+- [ ] Eksperymenty są zalogowane w MLflow z metrykami i artefaktami
+- [ ] API działa w Dockerze i przechodzi health check
+- [ ] Testy jednostkowe przechodzą (`pytest`)
+- [ ] Monitoring dryfu jest skonfigurowany i testowany
+- [ ] README zawiera instrukcję uruchomienia projektu
+- [ ] Kod jest sformatowany i przechodzi linting
+
+---
+
 **Gratulacje!** Ukończyłeś kurs MLOps i Inżynierii Systemów ML. 🎉

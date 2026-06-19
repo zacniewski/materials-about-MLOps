@@ -527,12 +527,29 @@ python scripts/compare_experiments.py
 
 ---
 
+## Typowe problemy i rozwiązania
+
+| Problem | Przyczyna | Rozwiązanie |
+|---------|-----------|-------------|
+| `ConnectionRefusedError` przy logowaniu | Serwer MLflow nie jest uruchomiony | Uruchom `mlflow server` w osobnym terminalu |
+| Eksperymenty nie pojawiają się w UI | Zły `tracking_uri` | Sprawdź `mlflow.get_tracking_uri()` — powinien wskazywać na serwer |
+| `MlflowException: RESOURCE_ALREADY_EXISTS` | Eksperyment o tej nazwie już istnieje | Użyj `mlflow.set_experiment()` zamiast `create_experiment()` |
+| Model Registry nie działa | Backend store to plik (nie baza danych) | Użyj `--backend-store-uri sqlite:///mlflow.db` przy starcie serwera |
+| Artefakty nie są widoczne w UI | Zła ścieżka `artifact-root` | Sprawdź `--default-artifact-root` przy starcie serwera |
+
+> 💡 **Wskazówka:** Aby porównać eksperymenty w UI MLflow, zaznacz kilka runów checkboxem i kliknij „Compare". Zobaczysz wykresy porównawcze metryk i parametrów.
+
+> 💡 **Wskazówka:** Używaj `mlflow.autolog()` dla szybkiego logowania — automatycznie loguje parametry, metryki i model dla scikit-learn, PyTorch, TensorFlow i innych frameworków.
+
+---
+
 ## Zadania do samodzielnego wykonania
 
 1. **Dodaj nowy eksperyment** z XGBoost (`pip install xgboost`) i porównaj z Random Forest.
 2. **Zaloguj dodatkową metrykę** – AUC-PR (Precision-Recall AUC) dla niezbalansowanych klas.
 3. **Dodaj tag** `data_version` do każdego runu i filtruj po nim w UI.
 4. **Napisz skrypt** który automatycznie promuje model do Production jeśli jego AUC jest lepsze od aktualnego modelu produkcyjnego.
+5. **Użyj `mlflow.autolog()`** — uruchom eksperyment z automatycznym logowaniem i porównaj, co zostało zalogowane vs ręczne logowanie.
 
 ## Pytania kontrolne
 
@@ -540,11 +557,12 @@ python scripts/compare_experiments.py
 2. Co to jest MLflow Model Registry i jakie stany może mieć model?
 3. Dlaczego logujemy CV AUC zamiast tylko AUC na zbiorze testowym?
 4. Jak załadować model z MLflow Registry bez znajomości ścieżki do pliku?
+5. Co robi `mlflow.autolog()` i kiedy warto go używać?
 
 ## Podsumowanie
 
 W tym laboratorium:
-- ✅ Uruchomiłeś lokalny serwer MLflow
+- ✅ Uruchomiłeś lokalny serwer MLflow z bazą SQLite
 - ✅ Zalogowałeś parametry, metryki, wykresy i modele
 - ✅ Porównałeś 6 różnych modeli w UI MLflow
-- ✅ Zarejestrowałeś model w Model Registry i zarządzałeś jego cyklem życia
+- ✅ Zarejestrowałeś model w Model Registry i zarządzałeś jego cyklem życia (Staging → Production)

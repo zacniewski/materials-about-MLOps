@@ -684,12 +684,36 @@ git push -u origin feature/add-ci-workflow
 
 ---
 
+## Typowe problemy i rozwiązania
+
+| Problem | Przyczyna | Rozwiązanie |
+|---------|-----------|-------------|
+| Workflow nie uruchamia się | Zły trigger lub ścieżka pliku YAML | Plik musi być w `.github/workflows/` i mieć poprawny trigger `on:` |
+| `pip install` trwa 5+ minut | Brak cache pip | Dodaj `actions/setup-python` z `cache: 'pip'` |
+| Sekrety nie są dostępne w PR z forka | GitHub nie udostępnia sekretów forkom | Użyj `pull_request_target` zamiast `pull_request` (ostrożnie!) |
+| Quality Gate przechodzi mimo złych metryk | Skrypt nie zwraca `sys.exit(1)` | Upewnij się, że skrypt kończy się niezerowym kodem przy niepowodzeniu |
+| `act` nie działa lokalnie | Brak Docker lub zły obraz | Zainstaluj Docker i użyj `act -P ubuntu-latest=catthehacker/ubuntu:act-latest` |
+
+> 💡 **Wskazówka:** Używaj `act` (https://github.com/nektos/act) do lokalnego testowania workflow GitHub Actions — oszczędza czas i limity minut GitHub.
+
+> 💡 **Wskazówka:** Dodaj `concurrency` do workflow, aby anulować poprzednie uruchomienia przy nowym pushu — zapobiega marnowaniu zasobów na nieaktualne commity.
+
+```yaml
+# Dodaj na początku workflow:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+---
+
 ## Zadania do samodzielnego wykonania
 
 1. **Dodaj job** `security-scan` używający `bandit` do skanowania kodu Python pod kątem podatności.
 2. **Skonfiguruj cache** dla pip w workflow – zmierz jak skraca czas wykonania.
 3. **Dodaj badge** statusu CI do README.md (`[![CI](https://github.com/...)]`).
 4. **Zaimplementuj** workflow `scheduled_retraining.yml` uruchamiający trening co tydzień.
+5. **Dodaj `concurrency`** do workflow, aby anulować poprzednie uruchomienia przy nowym pushu.
 
 ## Pytania kontrolne
 
@@ -697,12 +721,13 @@ git push -u origin feature/add-ci-workflow
 2. Co to jest `environment: production` w GitHub Actions i jak chroni wdrożenie?
 3. Jak `workflow_run` różni się od `on: push` jako trigger?
 4. Dlaczego warto uruchamiać CI lokalnie przed push?
+5. Co robi `concurrency` w workflow i dlaczego jest przydatne?
 
 ## Podsumowanie
 
 W tym laboratorium:
-- ✅ Skonfigurowałeś branching strategy dla projektu ML
+- ✅ Skonfigurowałeś branching strategy dla projektu ML (main/develop/feature)
 - ✅ Zbudowałeś workflow CI z lintingiem, testami i walidacją danych
 - ✅ Zaimplementowałeś Quality Gate blokujący słabe modele
-- ✅ Zbudowałeś workflow CD z smoke testami
-- ✅ Uruchomiłeś pełne CI lokalnie
+- ✅ Zbudowałeś workflow CD z smoke testami i powiadomieniami
+- ✅ Uruchomiłeś pełne CI lokalnie z `act`

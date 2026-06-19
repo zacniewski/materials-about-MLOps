@@ -787,12 +787,29 @@ pytest tests/ -v --tb=short
 
 ---
 
+## Typowe problemy i rozwiązania
+
+| Problem | Przyczyna | Rozwiązanie |
+|---------|-----------|-------------|
+| `ImportError` w komponencie KFP | Biblioteka nie jest w `packages_to_install` | Dodaj brakującą bibliotekę do dekoratora `@dsl.component` |
+| Kompilacja pipeline'u się nie udaje | Błąd typów w sygnaturze komponentu | KFP v2 wymaga typów: `str`, `int`, `float`, `bool`, `Input[Dataset]`, `Output[Model]` |
+| Komponent nie widzi pliku wejściowego | Zła ścieżka do artefaktu | Używaj `input_artifact.path` zamiast hardkodowanych ścieżek |
+| Pipeline działa lokalnie, ale nie na K8s | Brak obrazu Docker w rejestrze | Zbuduj i wypchnij obraz bazowy do Container Registry |
+| Caching nie działa | Zmienione dane wejściowe lub parametry | Sprawdź, czy `enable_caching=True` jest ustawione i czy wejścia się nie zmieniły |
+
+> 💡 **Wskazówka:** Rozdzielaj logikę biznesową od kodu KFP — pisz funkcje Python, które można testować niezależnie, a komponenty KFP niech będą tylko „opakowaniem" wywołującym te funkcje.
+
+> 💡 **Wskazówka:** Używaj `compiler.Compiler().compile()` do generowania YAML i przeglądaj go — pomaga zrozumieć, jak KFP tłumaczy Python na workflow Kubernetes.
+
+---
+
 ## Zadania do samodzielnego wykonania
 
 1. **Dodaj komponent** `feature_selection` między preprocessing a treningiem, który usuwa cechy o niskiej ważności.
 2. **Dodaj parametr** `model_type` do pipeline'u umożliwiający wybór między RF a GBM.
 3. **Zaimplementuj caching** – dodaj `enable_caching=True` i sprawdź, które kroki są pomijane przy ponownym uruchomieniu.
 4. **Napisz test** sprawdzający, że pipeline kompiluje się bez błędów.
+5. **Dodaj komponent notyfikacji** — wyślij podsumowanie wyników pipeline'u (metryki, decyzja o wdrożeniu) na konsolę lub do pliku.
 
 ## Pytania kontrolne
 
@@ -800,12 +817,12 @@ pytest tests/ -v --tb=short
 2. Co to jest artefakt KFP i jak różni się od zwykłego parametru?
 3. Jak działa `dsl.If` i kiedy go używamy?
 4. Dlaczego testujemy komponenty jako zwykłe funkcje Python, a nie przez KFP?
+5. Jakie są zalety kompilacji pipeline'u do YAML?
 
 ## Podsumowanie
 
 W tym laboratorium:
 - ✅ Zdefiniowałeś 5 komponentów KFP jako funkcje Python
 - ✅ Zbudowałeś kompletny pipeline z warunkowym wdrożeniem
-- ✅ Skompilowałeś pipeline do YAML
-- ✅ Uruchomiłeś pipeline lokalnie
-- ✅ Napisałeś testy jednostkowe dla komponentów
+- ✅ Skompilowałeś pipeline do YAML i uruchomiłeś lokalnie
+- ✅ Napisałeś testy jednostkowe dla komponentów (oddzielone od KFP)

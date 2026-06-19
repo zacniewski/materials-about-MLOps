@@ -673,12 +673,30 @@ git commit -m "test: add unit tests for preprocessing"
 
 ---
 
+## Typowe problemy i rozwiązania
+
+| Problem | Przyczyna | Rozwiązanie |
+|---------|-----------|-------------|
+| `dvc add` zgłasza błąd | DVC nie jest zainicjalizowany | Uruchom `dvc init` w katalogu z repozytorium Git |
+| `dvc repro` pomija wszystkie kroki | Żadne zależności się nie zmieniły | Zmień parametr w `params.yaml` lub dane wejściowe |
+| `pre-commit` nie działa | Hooks nie są zainstalowane | Uruchom `pre-commit install` |
+| `ModuleNotFoundError` w testach | Ścieżka do modułu nie jest w PYTHONPATH | Dodaj `sys.path.insert(0, ...)` lub zainstaluj pakiet w trybie editable (`pip install -e .`) |
+| `pip install` trwa bardzo długo | Brak cache pip | Użyj `pip install --cache-dir .pip-cache` |
+| Git commituje pliki danych | Brak wpisu w `.gitignore` | Dodaj `data/raw/` i `models/` do `.gitignore` |
+
+> 💡 **Wskazówka:** Jeśli `dvc repro` nie wykrywa zmian w danych, sprawdź czy plik `.dvc` jest aktualny (`dvc status`). DVC śledzi zmiany na podstawie hash MD5 plików.
+
+> 💡 **Wskazówka:** Używaj `dvc dag` do wizualizacji grafu zależności pipeline'u — pomaga zrozumieć, które kroki zostaną uruchomione.
+
+---
+
 ## Zadania do samodzielnego wykonania
 
-1. **Rozszerz pipeline DVC** o krok ewaluacji modelu na zbiorze testowym.
-2. **Dodaj parametr** `min_samples_leaf` do `params.yaml` i użyj go w treningu.
-3. **Napisz test** sprawdzający, że `income_per_age` jest obliczane poprawnie.
-4. **Porównaj metryki** między dwoma wersjami modelu (zmień `n_estimators` i uruchom `dvc repro`).
+1. **Rozszerz pipeline DVC** o krok ewaluacji modelu na zbiorze testowym. Dodaj nowy stage `evaluate` w `dvc.yaml`.
+2. **Dodaj parametr** `min_samples_leaf` do `params.yaml` i użyj go w treningu. Uruchom `dvc repro` i sprawdź, czy metryki się zmieniły.
+3. **Napisz test** sprawdzający, że `income_per_age` jest obliczane poprawnie (wartość = income / age).
+4. **Porównaj metryki** między dwoma wersjami modelu (zmień `n_estimators` i uruchom `dvc repro`, potem `dvc metrics diff`).
+5. **Dodaj zdalne storage DVC** (np. lokalne: `dvc remote add -d myremote /tmp/dvc-storage`) i przetestuj `dvc push` / `dvc pull`.
 
 ## Pytania kontrolne
 
@@ -686,12 +704,13 @@ git commit -m "test: add unit tests for preprocessing"
 2. Co przechowuje plik `.dvc` i dlaczego jest ważny?
 3. Dlaczego nie commitujemy plików danych bezpośrednio do Git?
 4. Co robi `dvc repro` i kiedy pomija kroki?
+5. Dlaczego warto używać struktury katalogów Cookiecutter Data Science?
 
 ## Podsumowanie
 
 W tym laboratorium:
 - ✅ Skonfigurowałeś środowisko MLOps z Git i DVC
-- ✅ Zorganizowałeś projekt zgodnie z dobrymi praktykami
-- ✅ Wersjonujesz dane z DVC
-- ✅ Zdefiniowałeś reprodukowalny pipeline DVC
-- ✅ Skonfigurowałeś pre-commit hooks i testy
+- ✅ Zorganizowałeś projekt zgodnie z dobrymi praktykami (Cookiecutter Data Science)
+- ✅ Wersjonujesz dane z DVC (dodawanie, aktualizacja, przełączanie wersji)
+- ✅ Zdefiniowałeś reprodukowalny pipeline DVC z parametrami i metrykami
+- ✅ Skonfigurowałeś pre-commit hooks i testy jednostkowe
