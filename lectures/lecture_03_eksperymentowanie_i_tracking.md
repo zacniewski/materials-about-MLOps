@@ -532,13 +532,58 @@ wandb.finish()
 
 ---
 
+## 10. Typowe pułapki w śledzeniu eksperymentów
+
+> ⚠️ **Pułapka 1: Porównywanie jabłek z gruszkami**
+> Porównywanie modeli trenowanych na różnych wersjach danych lub z różnym preprocessingiem. Zawsze loguj `data_version` i `preprocessing_version` jako parametry.
+
+> ⚠️ **Pułapka 2: Overfitting do zbioru testowego**
+> Wielokrotne strojenie hiperparametrów na tym samym zbiorze testowym prowadzi do overfittingu. Rozwiązanie: używaj trzech zbiorów (train/validation/test) lub cross-validation, a zbiór testowy traktuj jako „ostateczny egzamin".
+
+> ⚠️ **Pułapka 3: Brak logowania negatywnych wyników**
+> Zespoły często logują tylko udane eksperymenty. Negatywne wyniki są równie wartościowe — pokazują, czego nie warto próbować. Loguj **każdy** eksperyment, nawet nieudany.
+
+```python
+# ✅ Dobra praktyka: loguj też nieudane eksperymenty z odpowiednim tagiem
+with mlflow.start_run(run_name="failed-experiment", tags={"status": "failed"}):
+    mlflow.log_param("reason", "OOM - model zbyt duży dla dostępnej pamięci")
+    mlflow.log_param("model_class", "TransformerXL")
+    mlflow.log_param("memory_required_gb", 32)
+    mlflow.log_param("memory_available_gb", 16)
+```
+
+> ⚠️ **Pułapka 4: Metryki ML vs metryki biznesowe**
+> Wysoki AUC-ROC nie zawsze oznacza wartość biznesową. Model z AUC=0.85 może generować więcej zysku niż model z AUC=0.92, jeśli lepiej identyfikuje klientów o wysokiej wartości. Zawsze loguj metryki biznesowe obok metryk ML.
+
+### Case Study: Netflix — eksperymenty na skalę
+
+**Netflix** prowadzi tysiące eksperymentów ML jednocześnie (rekomendacje, thumbnails, personalizacja UI):
+- Każdy eksperyment jest śledzony z pełnym kontekstem: dane, parametry, metryki ML i metryki biznesowe (czas oglądania, retencja).
+- Używają wewnętrznej platformy do A/B testowania modeli na żywym ruchu.
+- Kluczowa lekcja: **metryka offline (AUC) nie zawsze koreluje z metryką online (czas oglądania)**. Dlatego każdy model przechodzi testy A/B przed pełnym wdrożeniem.
+
+---
+
+## Pytania kontrolne i do dyskusji
+
+1. Dlaczego systematyczne śledzenie eksperymentów jest ważniejsze niż sam wybór algorytmu?
+2. Jakie informacje powinien zawierać każdy zalogowany eksperyment w MLflow?
+3. Czym różni się `mlflow.log_param` od `mlflow.log_metric`? Kiedy użyjesz każdego?
+4. Wyjaśnij, jak Optuna wybiera kolejne hiperparametry do przetestowania (TPE sampler).
+5. Porównaj MLflow i Weights & Biases — kiedy wybierzesz jedno, a kiedy drugie?
+6. Co to jest overfitting do zbioru testowego i jak go uniknąć?
+7. **Dyskusja:** Czy warto logować eksperymenty, które zakończyły się niepowodzeniem? Uzasadnij.
+
+---
+
 ## Podsumowanie
 
 - Systematyczne śledzenie eksperymentów jest kluczowe dla reprodukowalności i porównywania modeli.
 - **MLflow** oferuje kompletne rozwiązanie: tracking, registry, serving.
-- Loguj **wszystko**: parametry, metryki, artefakty, środowisko, wersję kodu.
-- **Optuna** automatyzuje poszukiwanie optymalnych hiperparametrów.
-- Dobra organizacja eksperymentów (nazewnictwo, tagi) oszczędza czas w przyszłości.
+- Loguj **wszystko**: parametry, metryki, artefakty, środowisko, wersję kodu — także nieudane eksperymenty.
+- **Optuna** automatyzuje poszukiwanie optymalnych hiperparametrów (TPE, pruning).
+- Dobra organizacja eksperymentów (nazewnictwo, tagi, hierarchia) oszczędza czas w przyszłości.
+- Pamiętaj o różnicy między metrykami ML a metrykami biznesowymi.
 
 ## Literatura i zasoby
 
@@ -546,3 +591,5 @@ wandb.finish()
 - [Optuna Documentation](https://optuna.readthedocs.io/)
 - [Weights & Biases Documentation](https://docs.wandb.ai/)
 - [Hyperparameter Optimization: A Spectral Approach](https://arxiv.org/abs/1706.00764)
+- [Netflix Technology Blog – ML Experimentation](https://netflixtechblog.com/)
+- [How to Track ML Experiments (Neptune.ai Blog)](https://neptune.ai/blog/ml-experiment-tracking)

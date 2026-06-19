@@ -810,6 +810,56 @@ repos:
 
 ---
 
+## 8. Typowe pułapki w CI/CD dla ML
+
+> ⚠️ **Pułapka 1: Trening w CI/CD na pełnych danych**
+> Pipeline CI trwa 4 godziny, bo trenuje model na pełnym zbiorze danych. Rozwiązanie: w CI używaj **podzbioru danych** (smoke test), a pełny trening uruchamiaj osobno (np. scheduled pipeline).
+
+> ⚠️ **Pułapka 2: Brak quality gates**
+> Model jest wdrażany automatycznie bez sprawdzenia metryk. Jeden zły commit może wdrożyć model z AUC=0.50. Zawsze dodawaj bramki jakości z minimalnymi progami.
+
+> ⚠️ **Pułapka 3: Sekrety w kodzie**
+> Klucze API, hasła do baz danych i tokeny wpisane bezpośrednio w kodzie lub plikach konfiguracyjnych. Używaj GitHub Secrets, Vault lub zmiennych środowiskowych.
+
+> ⚠️ **Pułapka 4: Brak testów danych**
+> Testy kodu przechodzą, ale model jest trenowany na uszkodzonych danych (np. puste kolumny, zmieniony schemat). Zawsze testuj dane przed treningiem.
+
+### Case Study: Lyft — CI/CD dla setek modeli ML
+
+**Lyft** (ride-sharing) zarządza setkami modeli ML w produkcji:
+- Każdy model ma własny pipeline CI/CD z automatycznymi testami kodu, danych i metryk.
+- Używają **Flyte** (open-source orkiestrator) zamiast Airflow — lepsze wsparcie dla ML workflows.
+- Kluczowa praktyka: **shadow deployment** — nowy model działa równolegle z produkcyjnym przez 24h, porównując predykcje bez wpływu na użytkowników.
+- Automatyczne rollbacki: jeśli metryki biznesowe (czas oczekiwania, cena) pogarszają się o >2%, model jest automatycznie wycofywany.
+
+### Checklist CI/CD dla ML
+
+Przed wdrożeniem modelu upewnij się, że:
+
+- [ ] Testy jednostkowe kodu przechodzą (pytest)
+- [ ] Linting i type checking przechodzą (ruff, mypy)
+- [ ] Dane wejściowe są zwalidowane (schemat, rozkłady, brakujące wartości)
+- [ ] Model spełnia minimalne progi jakości (AUC, F1, latencja)
+- [ ] Model nie wykazuje biasu między grupami demograficznymi
+- [ ] Obraz Docker buduje się poprawnie i przechodzi health check
+- [ ] Smoke testy na endpoincie przechodzą
+- [ ] Sekrety nie są hardkodowane w kodzie
+- [ ] Dokumentacja jest aktualna (README, CHANGELOG)
+
+---
+
+## Pytania kontrolne i do dyskusji
+
+1. Czym różni się CI/CD dla ML od klasycznego CI/CD dla aplikacji webowej?
+2. Co to jest quality gate i dlaczego jest kluczowy w pipeline'ach ML?
+3. Jakie trzy poziomy testowania powinien zawierać pipeline CI/CD dla ML?
+4. Wyjaśnij, jak GitHub Actions może automatycznie wyzwalać retraining modelu.
+5. Dlaczego Infrastructure as Code (Terraform) jest ważne w kontekście MLOps?
+6. Jakie pre-commit hooks są szczególnie przydatne w projektach ML?
+7. **Dyskusja:** Czy warto trenować model w pipeline CI (przy każdym PR), czy lepiej robić to osobno? Jakie są trade-offy?
+
+---
+
 ## Podsumowanie
 
 - ML CI/CD rozszerza klasyczny CI/CD o walidację danych, trening i ewaluację modelu.
@@ -817,6 +867,7 @@ repos:
 - **GitHub Actions** umożliwia pełną automatyzację od commita do wdrożenia.
 - Testuj kod ML jak każdy inny kod: testy jednostkowe, integracyjne, wydajnościowe.
 - **Infrastructure as Code** (Terraform) zapewnia reprodukowalność środowiska.
+- Używaj checklisty przed każdym wdrożeniem — automatyzuj co się da, ale nie pomijaj żadnego kroku.
 
 ## Literatura i zasoby
 
@@ -825,3 +876,5 @@ repos:
 - [Terraform Documentation](https://developer.hashicorp.com/terraform/docs)
 - [pre-commit Documentation](https://pre-commit.com/)
 - [Google MLOps: CI/CD for ML](https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning)
+- [Flyte Documentation](https://docs.flyte.org/)
+- [Continuous Delivery for Machine Learning (martinfowler.com)](https://martinfowler.com/articles/cd4ml.html)

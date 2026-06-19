@@ -33,9 +33,46 @@ W odróżnieniu od klasycznego oprogramowania, systemy ML mają dodatkowy wymiar
 |--------|--------------------------|-----------|
 | Kod | Deterministyczny | Probabilistyczny |
 | Testowanie | Unit/integration tests | Testy danych + modelu |
-| Wersjonowanie | Kod (git) | Kod + dane + model |
+| Wersjonowanie | Kod (git) | Kod + dane + model + pipeline |
 | Degradacja | Błędy w kodzie | Data drift, concept drift |
-| Reprodukowalność | Łatwa | Trudna (losowość, dane) |
+| Reprodukowalność | Łatwa | Trudna (losowość, dane, środowisko) |
+| Zależności | Biblioteki | Biblioteki + dane + hardware (GPU) |
+| Debugowanie | Stack trace | Analiza rozkładów, metryk, cech |
+
+### Dług techniczny w systemach ML
+
+Artykuł Google „Hidden Technical Debt in Machine Learning Systems" (NIPS 2015) pokazuje, że **sam kod modelu to zaledwie ~5% całego systemu ML**. Reszta to infrastruktura:
+
+```mermaid
+graph TB
+    subgraph "Cały system ML"
+        CONFIG[Zarządzanie\nkonfiguracją]
+        DATA[Zbieranie\ni weryfikacja danych]
+        FE[Feature\nEngineering]
+        CODE[Kod ML\n~5% systemu]
+        SERVE[Infrastruktura\nserwowania]
+        MON[Monitoring]
+        PROC[Zarządzanie\nprocesami]
+        RES[Zarządzanie\nzasobami]
+        AUTO[Automatyzacja]
+    end
+```
+
+> 💡 **Pułapka:** Wiele zespołów koncentruje się wyłącznie na trenowaniu modelu (Jupyter Notebook), ignorując 95% pracy potrzebnej do wdrożenia i utrzymania modelu w produkcji. To główny powód, dla którego według badań Gartner **85% projektów ML nigdy nie trafia do produkcji**.
+
+### Case Study: Uber Michelangelo
+
+**Uber** zbudował wewnętrzną platformę MLOps o nazwie **Michelangelo**, która obsługuje tysiące modeli ML w produkcji (ETA, dynamiczne ceny, wykrywanie fraudów). Kluczowe wnioski:
+- Przed Michelangelo każdy zespół budował własne rozwiązania — brak standaryzacji prowadził do duplikacji pracy i niespójności.
+- Platforma ustandaryzowała cały cykl: od zarządzania danymi, przez trening, po serwowanie i monitoring.
+- Wprowadzenie centralnego **Feature Store** wyeliminowało problem, w którym różne zespoły obliczały te same cechy na różne sposoby.
+
+### Case Study: Spotify — rekomendacje muzyczne
+
+**Spotify** wykorzystuje MLOps do obsługi systemu rekomendacji dla ponad 500 milionów użytkowników:
+- Modele są retrenowane codziennie na nowych danych o odsłuchach.
+- Używają **Kubeflow Pipelines** do orkiestracji pipeline'ów ML.
+- Monitoring dryfu danych jest kluczowy — preferencje muzyczne zmieniają się sezonowo (np. kolędy w grudniu).
 
 ---
 
@@ -80,23 +117,43 @@ graph LR
 
 ### Level 0 – Ręczny proces
 - Data Scientist trenuje model lokalnie w notebooku.
-- Model jest eksportowany i wdrażany ręcznie.
+- Model jest eksportowany i wdrażany ręcznie (np. przez email lub pendrive).
 - Brak wersjonowania danych i modeli.
-- Brak monitoringu.
+- Brak monitoringu — nikt nie wie, czy model nadal działa poprawnie.
+- Brak automatycznych testów — „działa na moim laptopie".
 
 **Problem:** „Works on my machine" – model działa u Data Scientista, ale nie w produkcji.
 
+> 💡 **Typowa pułapka Level 0:** Data Scientist wysyła plik `model_final_v3_FINAL.pkl` na Slacku. Nikt nie wie, jakie dane i parametry zostały użyte. Po 3 miesiącach model przestaje działać, a odtworzenie go jest niemożliwe.
+
+**Przykład z życia:** Startup fintech trenuje model scoringowy w Jupyter Notebook. Model działa świetnie na danych testowych (AUC=0.92). Po wdrożeniu na produkcję okazuje się, że preprocessing danych różni się od tego w notebooku — AUC spada do 0.65.
+
 ### Level 1 – Automatyzacja treningu
-- Zdefiniowane ML Pipelines (automatyczny trening).
-- Wersjonowanie danych, kodu i modeli.
-- Automatyczne wyzwalanie retreningu (np. po wykryciu driftu).
-- Monitoring modelu w produkcji.
+- Zdefiniowane ML Pipelines (automatyczny trening od danych do modelu).
+- Wersjonowanie danych, kodu i modeli (DVC, MLflow).
+- Automatyczne wyzwalanie retreningu (np. po wykryciu driftu lub według harmonogramu).
+- Monitoring modelu w produkcji (metryki ML + metryki operacyjne).
+- Feature Store zapewnia spójność cech między treningiem a produkcją.
+
+**Przykład:** Bank automatycznie retrenuje model scoringowy co tydzień na nowych danych transakcyjnych. Pipeline waliduje dane, trenuje model, porównuje metryki z poprzednią wersją i rejestruje model w Model Registry.
 
 ### Level 2 – CI/CD dla ML
-- Pełna automatyzacja: od commita do wdrożenia.
+- Pełna automatyzacja: od commita do wdrożenia (GitHub Actions, Cloud Build).
 - Testy jednostkowe dla komponentów pipeline'u.
-- Automatyczne testy A/B nowych modeli.
-- Canary deployments, rollback.
+- Automatyczne testy A/B nowych modeli na produkcji.
+- Canary deployments (stopniowe wdrożenie), rollback w razie problemów.
+- Quality Gates — automatyczne bramki jakości blokujące wdrożenie słabych modeli.
+
+**Przykład:** Google Ads używa Level 2 MLOps — każda zmiana w kodzie modelu automatycznie uruchamia pipeline CI/CD, który trenuje model, testuje go, wdraża canary na 5% ruchu i monitoruje metryki biznesowe.
+
+### Jak ocenić swój poziom dojrzałości?
+
+| Pytanie | Level 0 | Level 1 | Level 2 |
+|---------|---------|---------|---------|
+| Jak często retrenujecie model? | Ręcznie, ad hoc | Automatycznie, regularnie | Automatycznie, na trigger |
+| Czy możecie odtworzyć model sprzed 3 miesięcy? | Nie | Tak (DVC/MLflow) | Tak + pełny audit trail |
+| Ile czasu zajmuje wdrożenie nowego modelu? | Dni–tygodnie | Godziny | Minuty |
+| Kto monitoruje model w produkcji? | Nikt | Zespół ML | Automatyczny system |
 
 ---
 
@@ -355,13 +412,42 @@ print(f"Metryki: {prod.metrics}")
 
 ---
 
+## 9. Role w zespole MLOps
+
+Wdrożenie MLOps wymaga współpracy wielu specjalistów:
+
+| Rola | Odpowiedzialność | Typowe narzędzia |
+|------|------------------|------------------|
+| **Data Scientist** | Eksperymentowanie, trening modeli | Jupyter, scikit-learn, PyTorch |
+| **ML Engineer** | Produktyzacja modeli, pipeline'y | KFP, Airflow, Docker |
+| **Data Engineer** | Pipeline'y danych, Feature Store | Spark, Kafka, dbt |
+| **DevOps/Platform Engineer** | Infrastruktura, CI/CD, monitoring | Kubernetes, Terraform, Prometheus |
+| **Product Manager** | Definiowanie metryk biznesowych | A/B testing, dashboardy |
+
+> 💡 **Wskazówka:** W małych zespołach jedna osoba często pełni kilka ról. Kluczowe jest, aby **każda z tych odpowiedzialności była pokryta**, nawet jeśli przez tę samą osobę.
+
+---
+
+## Pytania kontrolne i do dyskusji
+
+1. Wyjaśnij, dlaczego wdrożenie modelu ML w produkcji jest trudniejsze niż wdrożenie klasycznej aplikacji webowej.
+2. Na jakim poziomie dojrzałości MLOps (0, 1, 2) znajduje się Twoja organizacja lub projekt? Uzasadnij.
+3. Podaj trzy przykłady sytuacji, w których model ML może zdegradować się w produkcji.
+4. Czym różni się data drift od concept drift? Podaj przykład każdego z nich.
+5. Dlaczego sam kod modelu stanowi tylko ~5% całego systemu ML? Co stanowi pozostałe 95%?
+6. Jakie korzyści daje Feature Store w porównaniu z sytuacją, gdy każdy Data Scientist oblicza cechy samodzielnie?
+7. **Dyskusja:** Czy każdy projekt ML potrzebuje pełnego MLOps (Level 2)? Kiedy Level 0 jest wystarczający?
+
+---
+
 ## Podsumowanie
 
 - **MLOps** to praktyki łączące ML, inżynierię oprogramowania i operacje IT.
 - Główne wyzwania: reprodukowalność, data drift, concept drift, skalowalność.
 - Trzy poziomy dojrzałości: ręczny → automatyzacja treningu → pełne CI/CD.
 - Kluczowe komponenty: Feature Store, Experiment Tracking, Model Registry, Monitoring.
-- MLOps to nie jednorazowy projekt, ale **ciągły proces**.
+- Sam kod modelu to ~5% systemu — reszta to infrastruktura, dane i procesy.
+- MLOps to nie jednorazowy projekt, ale **ciągły proces** wymagający współpracy wielu ról.
 
 ## Literatura i zasoby
 
@@ -369,3 +455,6 @@ print(f"Metryki: {prod.metrics}")
 - [Sculley et al. "Hidden Technical Debt in Machine Learning Systems" (NIPS 2015)](https://papers.nips.cc/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html)
 - [Chip Huyen "Designing Machine Learning Systems" (O'Reilly, 2022)](https://www.oreilly.com/library/view/designing-machine-learning/9781098107956/)
 - [ml-ops.org](https://ml-ops.org/)
+- [Uber Michelangelo – ML Platform](https://www.uber.com/blog/michelangelo-machine-learning-platform/)
+- [Made With ML – MLOps Course](https://madewithml.com/)
+- [Awesome MLOps – lista narzędzi i zasobów](https://github.com/visenger/awesome-mlops)

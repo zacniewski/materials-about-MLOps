@@ -587,6 +587,52 @@ class TestPipelineComponents:
 
 ---
 
+## 10. Typowe pułapki w budowaniu pipeline'ów ML
+
+> ⚠️ **Pułapka 1: Monolityczny pipeline**
+> Jeden wielki skrypt, który robi wszystko — od pobierania danych po wdrożenie. Taki pipeline jest trudny do debugowania, testowania i modyfikowania. Rozwiązanie: dziel pipeline na małe, niezależne komponenty.
+
+> ⚠️ **Pułapka 2: Brak idempotentności**
+> Pipeline, który daje różne wyniki przy każdym uruchomieniu (np. przez brak ustalonego seeda lub pobieranie danych z API bez cache). Każdy komponent powinien dawać ten sam wynik dla tych samych danych wejściowych.
+
+> ⚠️ **Pułapka 3: Hardkodowane ścieżki i parametry**
+> Ścieżki do danych, hiperparametry i konfiguracje wpisane bezpośrednio w kodzie. Używaj plików konfiguracyjnych (params.yaml) i parametrów pipeline'u.
+
+> ⚠️ **Pułapka 4: Brak obsługi błędów**
+> Pipeline bez retry, timeoutów i alertów. W produkcji dane mogą być niedostępne, API może nie odpowiadać, a trening może się zawiesić. Zawsze dodawaj obsługę błędów i powiadomienia.
+
+### Case Study: Airbnb — Zipline ML Pipeline
+
+**Airbnb** zbudował wewnętrzną platformę **Zipline** do zarządzania pipeline'ami ML:
+- Obsługuje ponad 100 modeli ML w produkcji (dynamiczne ceny, wykrywanie fraudów, ranking wyników wyszukiwania).
+- Kluczowa innowacja: **automatyczne backfilling** — gdy dodajesz nową cechę, Zipline automatycznie oblicza ją dla danych historycznych.
+- Pipeline'y są definiowane deklaratywnie (YAML), co ułatwia audyt i reprodukowalność.
+
+### Porównanie orkiestratorów ML
+
+| Cecha | Kubeflow Pipelines | Apache Airflow | Prefect | Dagster |
+|-------|-------------------|----------------|---------|---------|
+| Specjalizacja | ML-first | Ogólny ETL | Ogólny | Data-first |
+| Infrastruktura | Kubernetes | Dowolna | Dowolna | Dowolna |
+| UI | Dobry (ML-focused) | Dobry | Bardzo dobry | Bardzo dobry |
+| Krzywa uczenia | Stroma | Średnia | Łagodna | Łagodna |
+| Caching | Wbudowany | Brak | Wbudowany | Wbudowany |
+| Najlepszy dla | Duże zespoły ML, K8s | Istniejące zespoły DE | Małe/średnie zespoły | Projekty data-centric |
+
+---
+
+## Pytania kontrolne i do dyskusji
+
+1. Czym różni się ML Pipeline od zwykłego skryptu Python, który wykonuje te same kroki?
+2. Wyjaśnij pojęcie DAG (Directed Acyclic Graph) w kontekście pipeline'ów.
+3. Dlaczego idempotentność jest ważną właściwością komponentów pipeline'u?
+4. Jak działa caching w KFP i kiedy warto go wyłączyć?
+5. Porównaj Kubeflow Pipelines i Apache Airflow — kiedy użyjesz każdego z nich?
+6. Jak testować komponenty pipeline'u? Podaj przykład testu jednostkowego.
+7. **Dyskusja:** Czy warto budować własny pipeline od zera, czy lepiej użyć gotowego orkiestratora? Jakie są trade-offy?
+
+---
+
 ## Podsumowanie
 
 - **ML Pipeline** automatyzuje i standaryzuje cały przepływ pracy ML.
@@ -595,6 +641,7 @@ class TestPipelineComponents:
 - **Caching** komponentów oszczędza czas i koszty przy ponownych uruchomieniach.
 - **Warunkowe wykonanie** pozwala na automatyczne decyzje o wdrożeniu.
 - Testuj komponenty pipeline'u jak zwykły kod Python.
+- Wybór orkiestratora zależy od kontekstu: KFP dla Kubernetes, Airflow dla istniejących zespołów DE, Prefect/Dagster dla mniejszych zespołów.
 
 ## Literatura i zasoby
 
@@ -602,3 +649,6 @@ class TestPipelineComponents:
 - [Vertex AI Pipelines](https://cloud.google.com/vertex-ai/docs/pipelines/introduction)
 - [Apache Airflow Documentation](https://airflow.apache.org/docs/)
 - [KFP SDK v2 Migration Guide](https://www.kubeflow.org/docs/components/pipelines/v2/migration/)
+- [Prefect Documentation](https://docs.prefect.io/)
+- [Dagster Documentation](https://docs.dagster.io/)
+- [Airbnb Zipline – ML Feature Pipeline](https://medium.com/airbnb-engineering)

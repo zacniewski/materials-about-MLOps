@@ -653,13 +653,61 @@ promote_model_to_production("churn_predictor", version=5, min_auc=0.82)
 
 ---
 
+## 8. Typowe pułapki w serwowaniu modeli
+
+> ⚠️ **Pułapka 1: Brak walidacji wejść**
+> Model przyjmuje dowolne dane bez sprawdzenia zakresu, typu czy kompletności. W produkcji mogą pojawić się wartości null, ujemne wiek czy nierealistyczne dochody. Zawsze waliduj dane wejściowe (Pydantic).
+
+> ⚠️ **Pułapka 2: Synchroniczne ładowanie modelu**
+> Ładowanie modelu przy każdym żądaniu zamiast jednorazowo przy starcie serwisu. Model powinien być załadowany do pamięci raz (lifespan) i współdzielony między żądaniami.
+
+> ⚠️ **Pułapka 3: Brak health checków**
+> Serwis bez endpointu `/health` nie może być poprawnie zarządzany przez Kubernetes (readiness/liveness probes). Zawsze implementuj health check.
+
+> ⚠️ **Pułapka 4: Brak wersjonowania API**
+> Zmiana formatu odpowiedzi bez wersjonowania łamie istniejących klientów. Używaj wersjonowania URL (`/v1/predict`, `/v2/predict`) lub nagłówków.
+
+### Case Study: Instagram — serwowanie modeli rekomendacji
+
+**Instagram** serwuje modele ML dla ponad 2 miliardów użytkowników:
+- Używają **gRPC** zamiast REST dla wewnętrznych serwisów (niższa latencja, mniejszy overhead).
+- Modele są serwowane na **GPU** z użyciem NVIDIA Triton Inference Server.
+- Stosują **model ensembling** — kilka modeli jest wywoływanych równolegle, a wyniki są agregowane.
+- Kluczowa metryka: **p99 latencja < 50ms** — każda milisekunda opóźnienia wpływa na engagement użytkowników.
+
+### Kiedy użyć gRPC zamiast REST?
+
+| Aspekt | REST (JSON) | gRPC (Protocol Buffers) |
+|--------|-------------|------------------------|
+| Format danych | JSON (tekstowy) | Protobuf (binarny) |
+| Latencja | Wyższa | Niższa (~2-5x) |
+| Rozmiar payload | Większy | Mniejszy (~3-10x) |
+| Streaming | Ograniczony | Natywny (bidirectional) |
+| Debugowanie | Łatwe (curl) | Trudniejsze |
+| Najlepszy dla | Publiczne API, prototypy | Wewnętrzne serwisy, niska latencja |
+
+---
+
+## Pytania kontrolne i do dyskusji
+
+1. Porównaj trzy wzorce serwowania modeli (online, batch, streaming). Kiedy użyjesz każdego?
+2. Dlaczego FastAPI jest lepszym wyborem niż Flask do serwowania modeli ML?
+3. Wyjaśnij różnicę między blue-green, canary i shadow deployment. Jakie są zalety i wady każdego?
+4. Jak zapewnić zero-downtime deployment modelu ML?
+5. Dlaczego konteneryzacja (Docker) jest ważna dla serwowania modeli?
+6. Co to jest Model Registry i jakie stany może mieć model (staging, production, archived)?
+7. **Dyskusja:** Kiedy warto użyć gRPC zamiast REST do serwowania modeli? Jakie są trade-offy?
+
+---
+
 ## Podsumowanie
 
 - Trzy główne wzorce serwowania: **online** (REST/gRPC), **batch**, **streaming**.
-- **FastAPI** + **Pydantic** to solidna podstawa dla serwisów ML.
+- **FastAPI** + **Pydantic** to solidna podstawa dla serwisów ML (walidacja, dokumentacja, async).
 - Konteneryzacja z **Docker** zapewnia przenośność i reprodukowalność.
 - Strategie wdrożeń: **blue-green** (szybki rollback), **canary** (stopniowe wdrożenie), **shadow** (testowanie bez ryzyka).
 - **Model Registry** zarządza cyklem życia modeli i umożliwia rollback.
+- Dla niskiej latencji rozważ **gRPC** zamiast REST i **BentoML/Triton** zamiast ręcznego serwisu.
 
 ## Literatura i zasoby
 
@@ -668,3 +716,5 @@ promote_model_to_production("churn_predictor", version=5, min_auc=0.82)
 - [MLflow Model Registry](https://mlflow.org/docs/latest/model-registry.html)
 - [Seldon Core](https://docs.seldon.io/projects/seldon-core/en/latest/)
 - [NVIDIA Triton Inference Server](https://developer.nvidia.com/triton-inference-server)
+- [gRPC Documentation](https://grpc.io/docs/)
+- [Instagram Engineering – ML at Scale](https://engineering.fb.com/category/ml-applications/)

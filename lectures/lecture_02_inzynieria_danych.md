@@ -583,14 +583,61 @@ def process_predictions(model):
 
 ---
 
+## 10. Typowe pułapki w inżynierii danych dla ML
+
+> ⚠️ **Pułapka 1: Data Leakage (wyciek danych)**
+> Najczęstszy i najgroźniejszy błąd — informacje z przyszłości „wyciekają" do danych treningowych. Przykład: normalizacja cech na całym zbiorze przed podziałem train/test powoduje, że statystyki zbioru testowego wpływają na trening.
+
+```python
+# ❌ ŹLE: normalizacja przed podziałem (data leakage!)
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)  # fit na CAŁYM zbiorze
+X_train, X_test = train_test_split(X_scaled, ...)
+
+# ✅ DOBRZE: normalizacja po podziale
+X_train, X_test = train_test_split(X, ...)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)  # fit tylko na train
+X_test_scaled = scaler.transform(X_test)         # transform na test
+```
+
+> ⚠️ **Pułapka 2: Training-Serving Skew**
+> Preprocessing danych w treningu różni się od preprocessingu w produkcji. Rozwiązanie: używaj tego samego kodu (np. sklearn Pipeline) w obu środowiskach.
+
+> ⚠️ **Pułapka 3: Ignorowanie brakujących wartości**
+> Model wytrenowany na danych bez braków może się zachowywać nieprzewidywalnie, gdy w produkcji pojawią się wartości null. Zawsze testuj model z brakującymi danymi.
+
+### Case Study: Zillow — katastrofa danych
+
+**Zillow** (portal nieruchomości) stracił **304 miliony dolarów** w 2021 roku z powodu błędów w modelu wyceny nieruchomości. Główne przyczyny:
+- Model był trenowany na danych historycznych, które nie uwzględniały gwałtownych zmian rynkowych (pandemia COVID-19).
+- Brak odpowiedniego monitoringu dryfu danych — model kontynuował predykcje mimo fundamentalnej zmiany rozkładu cen.
+- Niewystarczająca walidacja danych wejściowych — model akceptował nierealistyczne wartości cech.
+
+---
+
+## Pytania kontrolne i do dyskusji
+
+1. Wyjaśnij różnicę między Data Lake a Data Warehouse. Kiedy użyjesz każdego z nich?
+2. Dlaczego Parquet jest lepszym formatem niż CSV dla dużych zbiorów danych ML?
+3. Czym różni się ETL od ELT? Jakie są zalety podejścia ELT?
+4. Co to jest data leakage i jak go uniknąć?
+5. Jakie korzyści daje Feature Store w porównaniu z ręcznym obliczaniem cech?
+6. Dlaczego wersjonowanie danych (DVC) jest ważne w projektach ML?
+7. **Dyskusja:** Kiedy warto użyć stream processingu zamiast batch processingu w kontekście ML?
+
+---
+
 ## Podsumowanie
 
 - Dane są fundamentem systemów ML – ich jakość determinuje jakość modelu.
-- **Data Lake** przechowuje surowe dane, **Data Warehouse** przetworzone.
-- **Parquet** to preferowany format dla ML (kolumnowy, skompresowany).
-- **Walidacja danych** (Great Expectations) powinna być integralną częścią pipeline'u.
+- **Data Lake** przechowuje surowe dane, **Data Warehouse** przetworzone, **Data Lakehouse** łączy zalety obu.
+- **Parquet** to preferowany format dla ML (kolumnowy, skompresowany, z schematem).
+- **Walidacja danych** (Great Expectations) powinna być integralną częścią pipeline'u — nie opcjonalnym dodatkiem.
 - **Feature Store** eliminuje duplikację i zapewnia spójność cech między treningiem a produkcją.
 - **DVC** umożliwia wersjonowanie danych razem z kodem.
+- Unikaj typowych pułapek: data leakage, training-serving skew, ignorowanie brakujących wartości.
 
 ## Literatura i zasoby
 
@@ -599,3 +646,5 @@ def process_predictions(model):
 - [DVC Documentation](https://dvc.org/doc)
 - [Feast Feature Store](https://feast.dev/)
 - [Apache Parquet Format](https://parquet.apache.org/)
+- [Zillow's iBuying Debacle – What Went Wrong](https://insidebigdata.com/2021/12/13/the-500-million-lesson-from-zillow/)
+- [Data Leakage in Machine Learning (Kaggle)](https://www.kaggle.com/code/alexisbcook/data-leakage)

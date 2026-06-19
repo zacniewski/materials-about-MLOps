@@ -928,6 +928,50 @@ graph TB
 
 ---
 
+## 8. Typowe pułapki w skalowalności i bezpieczeństwie ML
+
+> ⚠️ **Pułapka 1: Przedwczesna optymalizacja**
+> Zespół spędza tygodnie na quantization i distillation modelu, który obsługuje 10 żądań na minutę. Najpierw zmierz, potem optymalizuj. Profiling przed optymalizacją!
+
+> ⚠️ **Pułapka 2: Brak load testów przed wdrożeniem**
+> Model działa świetnie na laptopie, ale pada przy 100 RPS na produkcji. Zawsze przeprowadzaj load testy (Locust) przed wdrożeniem.
+
+> ⚠️ **Pułapka 3: Ignorowanie kosztów GPU**
+> Zostawienie uruchomionych instancji GPU na noc/weekend. Jedna instancja z GPU T4 kosztuje ~$2.50/h = ~$1800/miesiąc. Używaj auto-scaling z minReplicas=0 dla środowisk dev.
+
+> ⚠️ **Pułapka 4: Brak ochrony przed atakami adversarialnymi**
+> Model jest dostępny publicznie bez rate limitingu i walidacji wejść. Atakujący może wyekstrahować model (model extraction) lub znaleźć słabości (adversarial examples).
+
+### Case Study: OpenAI — skalowalność GPT
+
+**OpenAI** skaluje modele GPT do milionów użytkowników:
+- Używają **model parallelism** — jeden model jest rozdzielony na wiele GPU (tensor parallelism, pipeline parallelism).
+- **KV-cache** — cache dla attention mechanism, który drastycznie redukuje koszt generowania kolejnych tokenów.
+- **Quantization** — modele są kwantyzowane do INT8/INT4 dla inference, co zmniejsza wymagania pamięciowe 2-4x.
+- Koszt treningu GPT-4 szacowany na **$100M+** — optymalizacja kosztów jest krytyczna.
+
+### Case Study: Revolut — bezpieczeństwo ML w fintech
+
+**Revolut** używa ML do wykrywania fraudów i musi spełniać rygorystyczne wymagania regulacyjne:
+- **Differential privacy** — model nie może ujawniać informacji o konkretnych transakcjach klientów.
+- **Explainability** — regulacje (GDPR, PSD2) wymagają wyjaśnialności decyzji modelu. Używają SHAP i LIME.
+- **Adversarial robustness** — model musi być odporny na próby obejścia przez fraudsterów (np. drobne modyfikacje kwot transakcji).
+- **Audit trail** — pełna historia decyzji modelu jest przechowywana przez 7 lat.
+
+---
+
+## Pytania kontrolne i do dyskusji
+
+1. Wyjaśnij różnicę między skalowaniem horyzontalnym a wertykalnym. Kiedy użyjesz każdego?
+2. Jak działa quantization i jakie są trade-offy (rozmiar vs dokładność)?
+3. Co to jest knowledge distillation i kiedy warto ją zastosować?
+4. Wymień trzy zagrożenia bezpieczeństwa specyficzne dla systemów ML.
+5. Jak działa differential privacy i kiedy jest wymagana?
+6. Jakie strategie optymalizacji kosztów zastosujesz dla serwisu ML w chmurze?
+7. **Dyskusja:** Czy model ML powinien być traktowany jako „czarna skrzynka" w kontekście regulacji (GDPR, AI Act)? Jakie są implikacje?
+
+---
+
 ## Podsumowanie
 
 - **Skalowalność** osiągamy przez Kubernetes HPA, load balancing i distributed training.
@@ -935,6 +979,7 @@ graph TB
 - **Bezpieczeństwo ML**: walidacja wejść, rate limiting, differential privacy, ochrona przed atakami adversarialnymi.
 - **Optymalizacja kosztów**: Spot VMs (80% taniej), auto-scaling, lifecycle policies, Parquet zamiast CSV.
 - Architektura referencyjna łączy wszystkie komponenty MLOps w spójny system.
+- Regulacje (GDPR, AI Act) wymagają explainability, audit trail i ochrony prywatności.
 
 ## Literatura i zasoby
 
@@ -944,3 +989,6 @@ graph TB
 - [Differential Privacy – Google's DP Library](https://github.com/google/differential-privacy)
 - [Google Cloud Pricing Calculator](https://cloud.google.com/products/calculator)
 - [Locust Load Testing](https://locust.io/)
+- [EU AI Act – Summary](https://artificialintelligenceact.eu/)
+- [SHAP Documentation](https://shap.readthedocs.io/)
+- [Adversarial Robustness Toolbox (ART)](https://github.com/Trusted-AI/adversarial-robustness-toolbox)

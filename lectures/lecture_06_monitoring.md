@@ -682,13 +682,55 @@ sum by (risk_level) (rate(ml_predictions_total[1h]))
 
 ---
 
+## 8. Typowe pułapki w monitoringu ML
+
+> ⚠️ **Pułapka 1: Monitorowanie tylko metryk operacyjnych**
+> Serwis odpowiada szybko (latencja OK, error rate 0%), ale model daje bezsensowne predykcje. Monitoruj **metryki ML** (rozkład predykcji, drift cech) obok metryk infrastrukturalnych.
+
+> ⚠️ **Pułapka 2: Zbyt czuły monitoring**
+> Alerty na każdą drobną zmianę w rozkładzie danych prowadzą do „alert fatigue" — zespół ignoruje alerty. Ustaw rozsądne progi (np. PSI > 0.2 zamiast > 0.05) i używaj okien czasowych (np. drift utrzymujący się > 1h).
+
+> ⚠️ **Pułapka 3: Brak danych referencyjnych**
+> Nie można wykryć dryfu bez danych referencyjnych z okresu treningu. Zawsze zapisuj statystyki danych treningowych (rozkłady, percentyle, korelacje) jako artefakt modelu.
+
+> ⚠️ **Pułapka 4: Automatyczny retraining bez zabezpieczeń**
+> Automatyczny retraining na „zatrutych" danych może wdrożyć gorszy model. Zawsze porównuj nowy model z aktualnym produkcyjnym i wymagaj minimalnych progów jakości.
+
+### Case Study: Tesla Autopilot — monitoring w czasie rzeczywistym
+
+**Tesla** monitoruje modele ML w milionach pojazdów jednocześnie:
+- Każdy pojazd wysyła dane telemetryczne o sytuacjach, w których model był niepewny (low confidence predictions).
+- Te dane są używane do **aktywnego uczenia** (active learning) — model jest retrenowany na najtrudniejszych przypadkach.
+- Monitoring wykrywa **edge cases** (np. nietypowe warunki pogodowe, nowe znaki drogowe), które są automatycznie dodawane do zbioru treningowego.
+
+### Case Study: Twitter — wykrywanie dryfu w rekomendacjach
+
+**Twitter** (X) monitoruje modele rekomendacji timeline'a:
+- Sezonowe wydarzenia (np. wybory, Super Bowl) powodują gwałtowne zmiany w rozkładzie danych — to **nie jest drift**, ale normalna zmienność.
+- Kluczowe wyzwanie: odróżnienie prawdziwego dryfu od sezonowości. Rozwiązanie: porównywanie z danymi z analogicznego okresu rok wcześniej.
+
+---
+
+## Pytania kontrolne i do dyskusji
+
+1. Wyjaśnij różnicę między data drift, concept drift, label drift i prediction drift.
+2. Jak działa test Kolmogorova-Smirnova (KS) i kiedy go użyjesz do wykrywania dryfu?
+3. Co oznaczają wartości PSI < 0.1, 0.1-0.2 i > 0.2?
+4. Dlaczego monitorowanie samych metryk operacyjnych (latencja, error rate) nie wystarcza?
+5. Jak skonfigurować automatyczny retraining, aby nie wdrożyć gorszego modelu?
+6. Jakie metryki wyeksponujesz na dashboardzie Grafana dla serwisu ML?
+7. **Dyskusja:** Jak odróżnić prawdziwy drift od sezonowej zmienności danych?
+
+---
+
 ## Podsumowanie
 
 - Modele degradują z powodu **data drift**, **concept drift** i zmian w pipeline danych.
 - Kluczowe metryki: **PSI** i **KS test** dla dryfu cech, **AUC/F1** dla jakości modelu.
 - **Evidently AI** generuje czytelne raporty HTML i umożliwia automatyczne testy.
-- **Prometheus + Grafana** to standard dla monitoringu operacyjnego.
-- **Automatyczny retraining** zamyka pętlę MLOps — model sam się aktualizuje.
+- **Prometheus + Grafana** to standard dla monitoringu operacyjnego i ML.
+- **Automatyczny retraining** zamyka pętlę MLOps — ale wymaga zabezpieczeń (quality gates).
+- Odróżniaj prawdziwy drift od sezonowości i normalnej zmienności.
 
 ## Literatura i zasoby
 
@@ -697,3 +739,5 @@ sum by (risk_level) (rate(ml_predictions_total[1h]))
 - [Grafana Documentation](https://grafana.com/docs/)
 - [Chip Huyen: ML Systems Design – Chapter on Monitoring](https://huyenchip.com/ml-interviews-book/)
 - [Google: Monitoring ML Models in Production](https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning#monitoring)
+- [NannyML – Post-deployment ML Monitoring](https://nannyml.readthedocs.io/)
+- [Failing Loudly: An Empirical Study of Methods for Detecting Dataset Shift](https://arxiv.org/abs/1810.11953)
