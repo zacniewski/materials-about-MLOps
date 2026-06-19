@@ -1,6 +1,6 @@
 # MLOps i Inżynieria Systemów ML
 
-Repozytorium zawiera kompletne materiały dydaktyczne do przedmiotu **„MLOps i Inżynieria Systemów ML"**: 8 wykładów i 8 laboratoriów z teorią, diagramami Mermaid i przykładami w Pythonie.
+Repozytorium zawiera kompletne materiały dydaktyczne do przedmiotu **„MLOps i Inżynieria Systemów ML"**: 8 wykładów i 8 laboratoriów z teorią, diagramami Mermaid, przykładami w Pythonie, case studies z przemysłu, pytaniami kontrolnymi i wskazówkami na typowe pułapki.
 
 ---
 
