@@ -10,7 +10,9 @@ Repozytorium zawiera kompletne materiały dydaktyczne do przedmiotu **„MLOps i
 materials-about-MLOps/
 ├── lectures/          # 8 wykładów (teoria + diagramy + przykłady)
 ├── labs/              # 8 laboratoriów (ćwiczenia praktyczne)
+├── reports/           # miejsce na raporty/projekty studentów
 ├── SYLLABUS.md        # Program przedmiotu
+├── requirements.txt   # zależności do ćwiczeń
 └── README.md          # Ten plik
 ```
 
@@ -94,7 +96,13 @@ graph TB
 ### Główne biblioteki
 
 ```bash
-pip install \
+python -m pip install -r requirements.txt
+```
+
+Ręczna instalacja (alternatywnie):
+
+```bash
+python -m pip install \
     scikit-learn pandas numpy matplotlib \
     mlflow dvc \
     fastapi uvicorn pydantic \
