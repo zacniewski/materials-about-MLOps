@@ -280,6 +280,29 @@ graph TB
     end
 ```
 
+### Opis elementów architektury
+
+#### Data Layer
+- **Data Sources** – źródła danych wejściowych (systemy transakcyjne, logi aplikacyjne, API, IoT), z których zasilany jest system ML.
+- **Data Lake** – warstwa surowych danych (często w formacie plikowym), przechowująca pełną historię danych do analizy i retreningu.
+- **Data Warehouse** – ustrukturyzowana warstwa analityczna po czyszczeniu i transformacjach, używana do raportowania i przygotowania cech.
+- **Feature Store** – centralne repozytorium cech z jednolitą definicją obliczeń dla treningu i inferencji, które ogranicza train/serve skew.
+
+#### ML Platform
+- **Experiment Tracking** – rejestr eksperymentów (parametry, metryki, artefakty, wersje danych i kodu), który zapewnia porównywalność i reprodukowalność.
+- **Model Training** – proces trenowania i walidacji modeli w pipeline’ach, z kontrolą jakości danych oraz metryk.
+- **Model Registry** – katalog wersji modeli wraz ze statusem (staging/production/archived), metadanymi i historią promocji.
+
+#### Serving Layer
+- **Online Serving (REST API)** – serwowanie predykcji w czasie rzeczywistym dla aplikacji wymagających niskich opóźnień.
+- **Batch Serving** – predykcje wsadowe uruchamiane cyklicznie (np. nocne skoringi), gdy nie jest wymagana odpowiedź online.
+
+#### Observability
+- **Monitoring & Alerting** – obserwowalność systemu i modelu: metryki operacyjne (latencja, błędy), metryki jakości predykcji, data/concept drift oraz alerty.
+- **Retrain trigger** – mechanizm automatycznego uruchamiania retreningu po przekroczeniu progów jakości, dryfu lub według harmonogramu.
+
+> 💡 **W praktyce:** warto definiować dla każdego komponentu właściciela, SLA/SLO oraz minimalny zestaw metryk. Dzięki temu architektura MLOps jest nie tylko kompletna technicznie, ale też operacyjnie utrzymywalna.
+
 ---
 
 ## 6. Kluczowe narzędzia ekosystemu MLOps
