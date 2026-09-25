@@ -970,6 +970,18 @@ graph TB
 6. Jakie strategie optymalizacji kosztów zastosujesz dla serwisu ML w chmurze?
 7. **Dyskusja:** Czy model ML powinien być traktowany jako „czarna skrzynka" w kontekście regulacji (GDPR, AI Act)? Jakie są implikacje?
 
+
+### Proponowane odpowiedzi
+
+1. Skalowanie wertykalne zwiększa zasoby pojedynczej maszyny (więcej CPU/RAM/GPU), a horyzontalne dodaje kolejne repliki/usługi. Wertykalne jest prostsze na start, horyzontalne lepsze dla wysokiej dostępności i dużego ruchu.
+2. Quantization obniża precyzję wag/aktywacji (np. FP32→INT8), zmniejszając model i przyspieszając inference. Trade-off: oszczędność zasobów kosztem możliwej utraty części dokładności.
+3. Knowledge distillation przenosi wiedzę z dużego „teacher” do mniejszego „studenta”, który uczy się z miękkich predykcji. Warto ją stosować, gdy potrzebna jest niższa latencja/tańsze serwowanie przy zachowaniu sensownej jakości.
+4. Przykłady zagrożeń: adversarial examples, model extraction przez masowe zapytania, data poisoning. Dodatkowo ryzykiem jest wyciek danych treningowych (privacy leakage).
+5. Differential privacy dodaje kontrolowany szum/statystyczną ochronę, aby pojedyncza obserwacja nie była możliwa do odtworzenia z modelu lub wyników. Jest wymagana szczególnie przy danych wrażliwych i rygorach regulacyjnych (np. finanse, zdrowie).
+6. Strategie kosztowe: auto-scaling (w tym minReplicas=0 w dev), right-sizing CPU/GPU, użycie Spot/Preemptible, batchowanie predykcji, cache, harmonogramy wyłączania środowisk i monitoring kosztów per model. Dodatkowo optymalizacja modelu (quantization/distillation) obniża koszt inferencji.
+7. Coraz rzadziej można traktować model jako pełną „czarną skrzynkę”, bo regulacje wymagają wyjaśnialności, audytu i zarządzania ryzykiem. Im większy wpływ decyzji na użytkownika, tym większa potrzeba transparentności procesu i wyników.
+
+
 ---
 
 ## Podsumowanie

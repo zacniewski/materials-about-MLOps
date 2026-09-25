@@ -858,6 +858,18 @@ Przed wdrożeniem modelu upewnij się, że:
 6. Jakie pre-commit hooks są szczególnie przydatne w projektach ML?
 7. **Dyskusja:** Czy warto trenować model w pipeline CI (przy każdym PR), czy lepiej robić to osobno? Jakie są trade-offy?
 
+
+### Proponowane odpowiedzi
+
+1. CI/CD dla ML obejmuje nie tylko kod, ale też dane, trening, artefakty modeli i metryki jakości. W klasycznej aplikacji webowej zwykle wystarczy build/test/deploy kodu.
+2. Quality gate to automatyczna bramka (np. minimalny AUC, limit latencji, brak driftu danych), która blokuje promocję słabego modelu. To kluczowa ochrona przed regresją jakości na produkcji.
+3. Trzy poziomy: testy kodu (unit/lint/type), testy danych (schema/quality/drift), testy modelu i wdrożenia (metryki, smoke/performance). Dopiero ich komplet daje wiarygodny sygnał gotowości.
+4. GitHub Actions może uruchamiać retraining po harmonogramie, po zmianie danych lub po sygnale z monitoringu (dispatch/webhook). Workflow pobiera dane, trenuje, ocenia, rejestruje model i promuje go tylko po spełnieniu quality gates.
+5. Terraform daje powtarzalność i wersjonowanie infrastruktury (środowiska, endpointy, IAM), więc zmiany są audytowalne i odtwarzalne. To ogranicza ręczne błędy konfiguracji.
+6. Szczególnie przydatne: lint/format, type check, testy jednostkowe, blokada dużych plików danych, czyszczenie outputów notebooków i skan sekretów. Dzięki temu problemy są wykrywane przed PR/merge.
+7. Trening przy każdym PR poprawia szybki feedback, ale może być drogi i wolny; osobne treningi (scheduled/event-based) są tańsze i stabilniejsze. Praktyczny kompromis: w CI robić smoke training na próbce, a pełny trening uruchamiać poza PR.
+
+
 ---
 
 ## Podsumowanie

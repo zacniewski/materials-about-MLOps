@@ -627,6 +627,18 @@ X_test_scaled = scaler.transform(X_test)         # transform na test
 6. Dlaczego wersjonowanie danych (DVC) jest ważne w projektach ML?
 7. **Dyskusja:** Kiedy warto użyć stream processingu zamiast batch processingu w kontekście ML?
 
+
+### Proponowane odpowiedzi
+
+1. Data Lake przechowuje surowe, różnorodne dane „as-is”, a Data Warehouse dane już oczyszczone i ustrukturyzowane pod analitykę. Lake wybieram do eksploracji i długiego przechowywania, Warehouse do raportowania i stabilnych zapytań biznesowych.
+2. Parquet jest kolumnowy, kompresuje dane i pozwala czytać tylko potrzebne kolumny, więc jest szybszy i tańszy I/O przy dużych zbiorach. CSV jest tekstowy, cięższy i mniej wydajny przy analityce ML.
+3. ETL: transformujesz przed załadowaniem do magazynu; ELT: najpierw ładujesz, potem transformujesz w silniku docelowym. ELT lepiej skaluje się w chmurze, daje większą elastyczność i łatwiejsze odtwarzanie transformacji.
+4. Data leakage to sytuacja, gdy model „widzi” informacje niedostępne w momencie predykcji (np. statystyki z testu podczas treningu). Unikamy tego przez poprawny split czasowy/train-test, pipeline preprocessingu fitowany tylko na train i rygor walidacji cech.
+5. Feature Store zapewnia spójność cech online/offline, wersjonowanie, reużywalność i centralne zarządzanie definicjami cech. Ręczne liczenie cech zwiększa ryzyko niespójności i duplikacji.
+6. DVC daje odtwarzalność eksperymentów: wiemy, na jakiej wersji danych trenowano dany model. Ułatwia audyt, porównania i rollback po pogorszeniu jakości.
+7. Stream processing warto wybrać, gdy decyzje muszą być podejmowane blisko czasu rzeczywistego (np. fraud, rekomendacje live). Batch wystarcza, gdy dopuszczalne jest opóźnienie i ważniejsza jest prostota/koszt.
+
+
 ---
 
 ## Podsumowanie

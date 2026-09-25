@@ -721,6 +721,18 @@ sum by (risk_level) (rate(ml_predictions_total[1h]))
 6. Jakie metryki wyeksponujesz na dashboardzie Grafana dla serwisu ML?
 7. **Dyskusja:** Jak odróżnić prawdziwy drift od sezonowej zmienności danych?
 
+
+### Proponowane odpowiedzi
+
+1. Data drift to zmiana rozkładu cech wejściowych, concept drift to zmiana relacji cechy→etykieta, label drift to zmiana rozkładu etykiet, a prediction drift to zmiana rozkładu predykcji modelu. Każdy sygnalizuje inny typ problemu i wymaga innej reakcji.
+2. KS porównuje dwie dystrybucje i zwraca statystykę różnicy oraz `p-value`; niskie `p-value` sugeruje istotną zmianę rozkładu. Używamy go głównie dla cech numerycznych, porównując dane referencyjne i bieżące.
+3. Zwykle PSI < 0.1 oznacza brak istotnego driftu, 0.1–0.2 umiarkowany sygnał do obserwacji, a > 0.2 silny drift wymagający reakcji. Progi trzeba kalibrować do konkretnego przypadku biznesowego.
+4. Bo model może działać szybko i bez błędów HTTP, a jednocześnie dawać słabe lub stronnicze predykcje. Dlatego trzeba monitorować też jakość ML, rozkłady danych i drift.
+5. Retraining powinien mieć quality gates: walidację danych, porównanie z modelem bazowym, próg minimalnych metryk, testy regresji i etap canary/shadow przed pełną promocją. Bez tego łatwo wdrożyć model gorszy od obecnego.
+6. Na dashboard dałbym: RPS, p95/p99 latencję, error rate, rozkłady predykcji, PSI/KS dla kluczowych cech, metryki jakości (AUC/F1 jeśli labels dostępne) i status alertów/retrainingu. Taki zestaw łączy perspektywę operacyjną i ML.
+7. Trzeba porównywać nie tylko do „wczoraj”, ale też do analogicznych okresów sezonowych, używać okien czasowych i progów utrzymywania się sygnału. Pomaga też wzbogacenie monitoringu o kontekst biznesowy (kampanie, święta, wydarzenia).
+
+
 ---
 
 ## Podsumowanie

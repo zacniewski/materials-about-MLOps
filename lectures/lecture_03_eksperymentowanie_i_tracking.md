@@ -574,6 +574,18 @@ with mlflow.start_run(run_name="failed-experiment", tags={"status": "failed"}):
 6. Co to jest overfitting do zbioru testowego i jak go uniknąć?
 7. **Dyskusja:** Czy warto logować eksperymenty, które zakończyły się niepowodzeniem? Uzasadnij.
 
+
+### Proponowane odpowiedzi
+
+1. Bez trackingu nie da się rzetelnie porównać wyników ani odtworzyć najlepszego modelu, więc nawet „lepszy algorytm” niewiele daje. Największą wartość daje kontrola procesu uczenia, nie pojedynczy wybór modelu.
+2. Minimum: parametry, metryki, artefakty modelu, wersja danych, wersja kodu (commit), środowisko (biblioteki), czas uruchomienia i tagi kontekstowe. To zapewnia pełną reprodukowalność i audyt.
+3. `mlflow.log_param` służy do zapisu konfiguracji (np. `max_depth=8`), a `mlflow.log_metric` do wyników liczbowych (np. `auc=0.89`) zwykle także po epokach/krokach. Parametry opisują wejście eksperymentu, metryki jego jakość.
+4. TPE buduje probabilistyczny model przestrzeni hiperparametrów i wybiera kolejne konfiguracje, które mają najwyższą oczekiwaną poprawę względem dotychczasowych wyników. Dzięki temu szuka mądrzej niż brute force.
+5. MLflow wybiorę, gdy potrzebuję open-source i self-hostingu; W&B, gdy priorytetem jest współpraca zespołowa i bogate UI SaaS. Oba narzędzia wspierają tracking, ale różnią się stylem pracy i kosztem.
+6. Overfitting do testu to strojenie decyzji pod jeden zbiór testowy, przez co wynik testowy przestaje być obiektywny. Zapobiegamy temu przez osobny validation set/CV i użycie testu dopiero na końcu.
+7. Tak, warto logować także nieudane eksperymenty, bo oszczędza to czas i zapobiega powtarzaniu tych samych błędów. To też buduje wiedzę zespołu o ograniczeniach danych i modeli.
+
+
 ---
 
 ## Podsumowanie

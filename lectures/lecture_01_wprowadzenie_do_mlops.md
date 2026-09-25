@@ -461,6 +461,18 @@ Wdrożenie MLOps wymaga współpracy wielu specjalistów:
 6. Jakie korzyści daje Feature Store w porównaniu z sytuacją, gdy każdy Data Scientist oblicza cechy samodzielnie?
 7. **Dyskusja:** Czy każdy projekt ML potrzebuje pełnego MLOps (Level 2)? Kiedy Level 0 jest wystarczający?
 
+
+### Proponowane odpowiedzi
+
+1. Wdrożenie modelu ML jest trudniejsze, bo poza kodem dochodzą dane, model, pipeline, monitoring dryfu i reprodukowalność. Aplikacja webowa jest zwykle deterministyczna, a system ML probabilistyczny i degraduje się wraz ze zmianą danych.
+2. W większości projektów uczelnianych i małych zespołów to zwykle Level 0 lub początek Level 1: są eksperymenty i ręczne wdrożenia, ale brakuje pełnego monitoringu i automatycznego CI/CD. Uzasadnieniem jest brak pełnego versioningu danych/modeli oraz automatycznych bramek jakości.
+3. (a) Zmiana zachowań użytkowników (np. sezonowość), (b) zmiana źródła/schematu danych wejściowych, (c) zmiana procesu biznesowego lub rynku, przez co relacja cechy→etykieta przestaje być aktualna.
+4. Data drift to zmiana rozkładu cech wejściowych (np. wiek klientów przesuwa się ku młodszym grupom). Concept drift to zmiana zależności między cechami a etykietą (np. te same cechy kredytowe przestają tak dobrze przewidywać niewypłacalność po kryzysie).
+5. Bo produkcyjny system ML wymaga infrastruktury: zbierania i walidacji danych, feature engineeringu, treningu, rejestru modeli, serwowania, monitoringu, alertingu, CI/CD i zarządzania zasobami. Kod modelu jest tylko jednym z elementów tego łańcucha.
+6. Feature Store daje jedną, spójną definicję cech dla treningu i inferencji, więc zmniejsza training-serving skew. Dodatkowo ogranicza duplikację pracy, poprawia reużywalność i upraszcza governance oraz audyt.
+7. Nie każdy projekt potrzebuje od razu Level 2. Level 0 bywa wystarczający dla PoC, prototypu lub małego projektu o niskim ryzyku i krótkim horyzoncie. Gdy rośnie skala, częstotliwość zmian i koszt błędów, warto przejść co najmniej do Level 1, a docelowo Level 2.
+
+
 ---
 
 ## Podsumowanie

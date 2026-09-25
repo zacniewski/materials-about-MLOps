@@ -698,6 +698,18 @@ promote_model_to_production("churn_predictor", version=5, min_auc=0.82)
 6. Co to jest Model Registry i jakie stany może mieć model (staging, production, archived)?
 7. **Dyskusja:** Kiedy warto użyć gRPC zamiast REST do serwowania modeli? Jakie są trade-offy?
 
+
+### Proponowane odpowiedzi
+
+1. Online daje predykcję natychmiast (ms), batch liczy okresowo dla dużych wolumenów, a streaming przetwarza zdarzenia ciągle z małym opóźnieniem. Wybór zależy od wymagań SLA i charakteru procesu biznesowego.
+2. FastAPI ma lepsze wsparcie typowania, walidacji (Pydantic), async i automatycznej dokumentacji OpenAPI, co przyspiesza budowę bezpiecznego API ML. Flask jest prostszy, ale wymaga więcej ręcznej pracy.
+3. Blue-green przełącza cały ruch między dwoma środowiskami (łatwy rollback, większy koszt). Canary wypuszcza model stopniowo na mały procent ruchu (niższe ryzyko, wolniejsze wdrożenie). Shadow duplikuje ruch do nowego modelu bez wpływu na użytkownika (świetne porównanie, ale brak realnej walidacji decyzji biznesowych na produkcji).
+4. Potrzebne są rolling/blue-green deploy, health checks, kompatybilność API, warm-up modelu i kontrola ruchu przez load balancer. Dodatkowo warto mieć szybki rollback i obserwowalność metryk po wdrożeniu.
+5. Docker zapewnia powtarzalne środowisko uruchomieniowe i eliminuje „works on my machine”. Ułatwia też skalowanie, deployment na K8s i kontrolę wersji zależności.
+6. Model Registry to centralny katalog wersji modeli z metadanymi, metrykami i historią promocji. Typowe stany to `staging` (kandydat), `production` (aktywny), `archived` (wycofany).
+7. gRPC warto użyć przy komunikacji wewnętrznej i niskiej latencji/wysokim RPS. REST bywa lepszy dla publicznego API i łatwiejszego debugowania; trade-off to wygoda vs wydajność.
+
+
 ---
 
 ## Podsumowanie

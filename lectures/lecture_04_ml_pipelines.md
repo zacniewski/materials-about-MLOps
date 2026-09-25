@@ -631,6 +631,18 @@ class TestPipelineComponents:
 6. Jak testować komponenty pipeline'u? Podaj przykład testu jednostkowego.
 7. **Dyskusja:** Czy warto budować własny pipeline od zera, czy lepiej użyć gotowego orkiestratora? Jakie są trade-offy?
 
+
+### Proponowane odpowiedzi
+
+1. ML Pipeline jest deklaratywny, podzielony na komponenty, wersjonowalny i orkiestrowany (z retry, cache, harmonogramem), a skrypt to zwykle sekwencja kroków bez silnego zarządzania wykonaniem. Pipeline lepiej skaluje się i jest łatwiejszy w utrzymaniu.
+2. DAG to graf zależności między zadaniami bez cykli, który określa kolejność uruchamiania komponentów. Dzięki temu orkiestrator wie, co można uruchomić równolegle i jakie są zależności danych.
+3. Idempotentność gwarantuje, że to samo wejście daje ten sam wynik przy ponownym uruchomieniu. To kluczowe dla niezawodności, debugowania, retry i audytu.
+4. KFP cache’uje wynik komponentu dla tego samego kodu i parametrów, więc ponowne uruchomienie może pominąć krok i oszczędzić czas/koszt. Wyłączamy cache np. przy testach integracyjnych, krokach z efektem ubocznym lub gdy świadomie chcemy wymusić świeże przeliczenie.
+5. KFP wybieram dla środowisk Kubernetes i pipeline’ów ML-first; Airflow dla dojrzałych zespołów data engineering i ogólnych workflow ETL. KFP ma silniejsze natywne wsparcie artefaktów ML, Airflow ma ogromny ekosystem operatorów.
+6. Komponenty testujemy jak zwykłe funkcje: wejście/wyjście, walidacja błędów, zakres metryk. Przykład: test sprawdza, że trening zapisuje model i zwraca AUC/F1 w poprawnych przedziałach.
+7. Zwykle lepiej zacząć od gotowego orkiestratora, bo skraca czas i zmniejsza ryzyko operacyjne. Własne rozwiązanie daje pełną kontrolę, ale zwiększa koszt utrzymania, ryzyko błędów i dług techniczny.
+
+
 ---
 
 ## Podsumowanie
