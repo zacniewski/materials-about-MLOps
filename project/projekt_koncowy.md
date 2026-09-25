@@ -1,9 +1,14 @@
-# Laboratorium 8: Projekt Końcowy – Kompletny System MLOps
+# Projekt końcowy: Kompletny System MLOps
 
 ## Informacje ogólne
-- **Czas:** 2 godziny (+ praca własna)
+- **Tryb:** Ścieżka projektowa realizowana równolegle z laboratoriami
+- **Czas:** kickoff + konsultacje (2h łącznie) + praca własna
 - **Poziom:** Zaawansowany
-- **Wymagania wstępne:** Lab 1–7 ukończone
+- **Wymagania wstępne:** realizacja Lab 1–7 (równolegle z projektem)
+
+## Jak pracować z tym materiałem
+
+Ten materiał opisuje **część projektową** kursu, która startuje na początku semestru i biegnie równolegle do części laboratoryjnej. Każde laboratorium dostarcza komponenty, które od razu wykorzystujesz w projekcie końcowym.
 
 ## Cel projektu
 
