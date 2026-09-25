@@ -20,7 +20,8 @@ Po tym laboratorium student:
 
 ```bash
 # Aktywuj środowisko
-source mlops-env/bin/activate
+source mlops-env/bin/activate  # Linux/Mac
+# mlops-env\Scripts\activate   # Windows
 cd mlops-project
 
 # Uruchom MLflow UI (w osobnym terminalu lub w tle)

@@ -20,10 +20,12 @@ Po tym laboratorium student:
 
 ```bash
 # Sprawdź wersję Pythona (wymagane >= 3.10)
-python3 --version
+python3 --version  # Linux/Mac
+# python --version  # Windows
 
 # Utwórz wirtualne środowisko
-python3 -m venv mlops-env
+python3 -m venv mlops-env  # Linux/Mac
+# python -m venv mlops-env  # Windows
 source mlops-env/bin/activate  # Linux/Mac
 # mlops-env\Scripts\activate   # Windows
 
