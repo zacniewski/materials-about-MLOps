@@ -12,6 +12,23 @@ Po tym laboratorium student:
 - opanuje podstawy wersjonowania kodu i danych,
 - skonfiguruje pre-commit hooks.
 
+## Git, DVC i `params.yaml` — co to jest i kiedy używać
+
+### Git
+- **Co to jest:** system kontroli wersji kodu i plików tekstowych.
+- **Po co:** pozwala śledzić historię zmian, pracować zespołowo i bezpiecznie wracać do wcześniejszych wersji.
+- **Jak i kiedy używać:** używaj codziennie podczas pracy nad kodem (`git add`, `git commit`, `git push`), po każdej logicznej porcji zmian.
+
+### DVC
+- **Co to jest:** narzędzie do wersjonowania danych i artefaktów ML, współpracujące z Git.
+- **Po co:** duże pliki danych/modeli nie trafiają bezpośrednio do Git, ale nadal są wersjonowane i odtwarzalne.
+- **Jak i kiedy używać:** używaj przy zmianach danych, modelu i pipeline'u (`dvc add`, `dvc repro`, `dvc push`), szczególnie gdy eksperymenty mają być powtarzalne.
+
+### `params.yaml`
+- **Co to jest:** centralny plik konfiguracji parametrów pipeline'u i modelu (np. `n_estimators`, `test_size`, lista cech).
+- **Po co:** oddziela konfigurację od kodu, ułatwia porównywanie eksperymentów i zapewnia reprodukowalność.
+- **Jak i kiedy używać:** edytuj przed uruchomieniem treningu/pipeline'u (`dvc repro`) zawsze, gdy chcesz zmienić hiperparametry, podział danych lub zestaw cech — bez modyfikowania kodu źródłowego.
+
 ---
 
 ## Część 1: Konfiguracja środowiska (30 min)
