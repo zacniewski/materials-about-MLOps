@@ -3,10 +3,11 @@
 ## Informacje podstawowe
 
 - **Nazwa przedmiotu:** MLOps i Inżynieria Systemów ML
-- **Forma zajęć:** wykład + laboratorium
+- **Forma zajęć:** wykład + laboratorium + projekt
 - **Łączny wymiar godzin:** 32h
   - wykład: 16h (8 × 2h)
-  - laboratorium: 16h (8 × 2h)
+  - laboratorium: 14h (7 × 2h)
+  - projekt: 2h (konsultacje + kickoff) + praca własna
 
 ## Cele przedmiotu
 
@@ -40,12 +41,21 @@ Po ukończeniu kursu student:
 | 5 | Monitoring i drift | SciPy, Prometheus, Grafana |
 | 6 | Pipeline ML | Kubeflow Pipelines |
 | 7 | CI/CD | GitHub Actions |
-| 8 | Projekt końcowy | Integracja pełnego przepływu MLOps |
+| 8 | Blok projektowy i konsultacje | Przegląd postępu projektów, wsparcie implementacyjne |
+
+## Plan części projektowej
+
+| Etap | Kiedy | Zakres |
+|---|---|---|
+| 1 | Start równolegle z Lab 1–2 | Wybór problemu ML i karta projektu |
+| 2 | Równolegle z Lab 3–5 | Implementacja komponentów (dane, model, API, monitoring) |
+| 3 | Równolegle z Lab 6–7 | Integracja end-to-end, CI/CD, dokumentacja |
+| 4 | Tydzień końcowy | Prezentacja i oddanie raportu końcowego |
 
 ## Forma zaliczenia
 
-- aktywność i wykonanie laboratoriów,
-- projekt końcowy (Lab 8) obejmujący kompletny mini-system MLOps,
+- aktywność i wykonanie laboratoriów (Lab 1–7),
+- projekt końcowy realizowany równolegle z laboratoriami (z konsultacjami w bloku projektowym),
 - raport końcowy z decyzji projektowych i wyników.
 
 ## Wymagania wstępne
@@ -58,5 +68,6 @@ Po ukończeniu kursu student:
 
 - `README.md` — mapa kursu i szybki start,
 - katalog `lectures/` — materiały teoretyczne,
-- katalog `labs/` — ćwiczenia praktyczne,
+- katalog `labs/` — ćwiczenia laboratoryjne,
+- katalog `project/` — materiały ścieżki projektowej,
 - katalog `reports/` — miejsce na raporty i artefakty projektowe.

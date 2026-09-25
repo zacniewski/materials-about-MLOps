@@ -1,6 +1,6 @@
 # MLOps i Inżynieria Systemów ML
 
-Repozytorium zawiera kompletne materiały dydaktyczne do przedmiotu **„MLOps i Inżynieria Systemów ML"**: 8 wykładów i 8 laboratoriów z teorią, diagramami Mermaid, przykładami w Pythonie, case studies z przemysłu, pytaniami kontrolnymi i wskazówkami na typowe pułapki.
+Repozytorium zawiera kompletne materiały dydaktyczne do przedmiotu **„MLOps i Inżynieria Systemów ML"**: 8 wykładów, 7 laboratoriów oraz ścieżkę projektu końcowego realizowaną równolegle do laboratoriów.
 
 ---
 
@@ -9,7 +9,8 @@ Repozytorium zawiera kompletne materiały dydaktyczne do przedmiotu **„MLOps i
 ```
 materials-about-MLOps/
 ├── lectures/          # 8 wykładów (teoria + diagramy + przykłady)
-├── labs/              # 8 laboratoriów (ćwiczenia praktyczne)
+├── labs/              # 7 laboratoriów (ćwiczenia praktyczne)
+├── project/           # materiały ścieżki projektowej
 ├── reports/           # miejsce na raporty/projekty studentów
 ├── SYLLABUS.md        # Program przedmiotu
 ├── requirements.txt   # zależności do ćwiczeń
@@ -33,7 +34,9 @@ materials-about-MLOps/
 
 ---
 
-## Laboratoria
+## Część praktyczna
+
+### Laboratoria
 
 | # | Temat | Plik | Poziom |
 |---|-------|------|--------|
@@ -44,7 +47,12 @@ materials-about-MLOps/
 | 5 | Monitoring Modelu i Wykrywanie Dryfu | [lab_05](labs/lab_05_monitoring_dryft.md) | Średni–Zaawansowany |
 | 6 | Budowanie ML Pipeline z Kubeflow Pipelines | [lab_06](labs/lab_06_ml_pipeline_kfp.md) | Zaawansowany |
 | 7 | CI/CD dla ML z GitHub Actions | [lab_07](labs/lab_07_cicd_github_actions.md) | Zaawansowany |
-| 8 | Projekt Końcowy – Kompletny System MLOps | [lab_08](labs/lab_08_projekt_koncowy.md) | Zaawansowany |
+
+### Projekt końcowy (równolegle)
+
+| Element | Opis | Plik |
+|---|---|---|
+| Projekt końcowy | Kompletny system MLOps realizowany od początku semestru równolegle z Lab 1–7 | [project_guide](project/projekt_koncowy.md) |
 
 ---
 
@@ -71,7 +79,10 @@ graph TB
         L5[L5: Monitoring\ni Drift]
         L6[L6: KFP\nPipelines]
         L7[L7: CI/CD\nGitHub Actions]
-        L8[L8: Projekt\nKońcowy]
+    end
+
+    subgraph "Projekt (równolegle)"
+        P0[P: Projekt\nKońcowy]
     end
 
     W1 --> L1
@@ -81,7 +92,13 @@ graph TB
     W5 --> L4
     W6 --> L5
     W7 --> L7
-    W8 --> L8
+    L1 --> P0
+    L2 --> P0
+    L3 --> P0
+    L4 --> P0
+    L5 --> P0
+    L6 --> P0
+    L7 --> P0
 ```
 
 ---
@@ -146,7 +163,8 @@ Szczegółowy program znajduje się w pliku [SYLLABUS.md](SYLLABUS.md).
 
 ### Rozkład godzinowy
 - **Wykłady:** 8 × 2h = 16h
-- **Laboratoria:** 8 × 2h = 16h
+- **Laboratoria:** 7 × 2h = 14h
+- **Projekt:** 2h konsultacji + praca własna (realizacja równoległa)
 
 ### Tematy wykładów
 
@@ -172,7 +190,15 @@ Szczegółowy program znajduje się w pliku [SYLLABUS.md](SYLLABUS.md).
 | L5 | Monitoring i drift | KS test, PSI, Prometheus, Grafana |
 | L6 | ML Pipeline KFP | Kubeflow Pipelines SDK v2 |
 | L7 | CI/CD | GitHub Actions, quality gates, branching |
-| L8 | Projekt końcowy | Integracja wszystkich komponentów |
+
+### Ścieżka projektowa
+
+| Etap | Kiedy | Zakres |
+|------|-------|--------|
+| P1 | Równolegle z L1–L2 | Wybór problemu i karta projektu |
+| P2 | Równolegle z L3–L5 | Implementacja komponentów systemu MLOps |
+| P3 | Równolegle z L6–L7 | Integracja end-to-end, CI/CD i dokumentacja |
+| P4 | Końcówka semestru | Prezentacja i oddanie raportu |
 
 ---
 
