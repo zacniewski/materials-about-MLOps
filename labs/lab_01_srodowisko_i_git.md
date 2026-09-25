@@ -673,6 +673,40 @@ git add tests/
 git commit -m "test: add unit tests for preprocessing"
 ```
 
+## Ściąga: podstawowe komendy Git
+
+| Komenda | Co robi |
+|---------|---------|
+| `git init` | Inicjalizuje nowe repozytorium Git w bieżącym katalogu. |
+| `git status` | Pokazuje stan repozytorium i listę zmodyfikowanych plików. |
+| `git add <plik>` | Dodaje plik do obszaru staging przed commitem. |
+| `git add .` | Dodaje wszystkie bieżące zmiany do staging. |
+| `git commit -m "..."` | Zapisuje zmiany ze staging w historii repozytorium. |
+| `git log --oneline` | Pokazuje skróconą historię commitów. |
+| `git diff` | Pokazuje różnice w plikach nieprzygotowanych do commitu. |
+| `git diff --staged` | Pokazuje różnice dla zmian dodanych do staging. |
+| `git branch` | Wyświetla listę gałęzi. |
+| `git checkout <branch>` | Przełącza na wskazaną gałąź. |
+| `git pull` | Pobiera i scala zmiany z repozytorium zdalnego. |
+| `git push` | Wysyła lokalne commity do repozytorium zdalnego. |
+
+## Ściąga: podstawowe komendy DVC
+
+| Komenda | Co robi |
+|---------|---------|
+| `dvc init` | Inicjalizuje DVC w repozytorium Git. |
+| `dvc add <plik_lub_katalog>` | Zaczyna śledzić dane poza Gitem i tworzy plik `.dvc`. |
+| `dvc status` | Pokazuje, które dane lub etapy pipeline'u są nieaktualne. |
+| `dvc repro` | Uruchamia etapy z `dvc.yaml`, które wymagają przeliczenia. |
+| `dvc dag` | Wyświetla graf zależności pipeline'u DVC. |
+| `dvc metrics show` | Pokazuje bieżące metryki zapisane przez pipeline. |
+| `dvc metrics diff` | Porównuje metryki między rewizjami Git. |
+| `dvc remote add -d <nazwa> <url>` | Dodaje i ustawia domyślny zdalny storage danych. |
+| `dvc push` | Wysyła wersjonowane dane do zdalnego storage. |
+| `dvc pull` | Pobiera wersjonowane dane ze zdalnego storage. |
+| `dvc checkout` | Odtwarza wersję danych zgodną z aktualnym commitem Git. |
+| `dvc gc` | Usuwa nieużywane dane z lokalnego cache DVC. |
+
 ---
 
 ## Typowe problemy i rozwiązania
