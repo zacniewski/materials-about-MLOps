@@ -114,7 +114,7 @@ mlflow ui
 
 ```mermaid
 graph LR
-    EXP[Experiment\nGrupa powiązanych\neksperymntów] --> RUN[Run\nJeden eksperyment]
+    EXP[Experiment\nGrupa powiązanych\neksperymentów] --> RUN[Run\nJeden eksperyment]
     RUN --> PAR[Parameters\nHiperparametry]
     RUN --> MET[Metrics\nWyniki ewaluacji]
     RUN --> ART[Artifacts\nModele, wykresy, dane]
