@@ -86,6 +86,38 @@ graph TB
 - Używają **Kubeflow Pipelines** do orkiestracji pipeline'ów ML.
 - Monitoring dryfu danych jest kluczowy — preferencje muzyczne zmieniają się sezonowo (np. kolędy w grudniu).
 
+
+### Software 1.0 vs Software 2.0
+
+W klasycznym oprogramowaniu (*Software 1.0*) programista zapisuje **reguły** w kodzie. W ML (*Software 2.0*, A. Karpathy) reguły są **wyuczane z danych**. Kod jest tylko jednym z trzech wejść systemu:
+
+```mermaid
+flowchart LR
+    subgraph "Software 1.0"
+        R1[Reguły\nkod] --> P1[Program]
+        D1[Dane wejściowe] --> P1 --> O1[Wynik]
+    end
+    subgraph "Software 2.0 (ML)"
+        D2[Dane treningowe] --> T[Trening]
+        C2[Kod + konfiguracja] --> T
+        T --> M[Model\nreguły wyuczone]
+        D3[Nowe dane] --> M --> O2[Predykcja]
+    end
+```
+
+Wniosek dla MLOps: **wersjonować trzeba trzy rzeczy – kod, dane i model** (oraz środowisko). Zmiana każdej z nich zmienia zachowanie systemu, nawet jeśli kod pozostał identyczny.
+
+| Wymiar | Software 1.0 | System ML |
+|---|---|---|
+| Źródło logiki | programista | dane + algorytm |
+| Błąd | wyjątek, zły wynik deterministyczny | „cicha” degradacja jakości |
+| Testowanie | testy jednostkowe/integracyjne | + testy danych, testy modelu, monitoring metryk |
+| Starzenie się | gdy zmienią się wymagania | również gdy zmieni się **świat** (dryft) |
+
+#### Zasada CACE
+
+*Changing Anything Changes Everything* (Sculley i in., 2015): w modelu cechy są splątane – zmiana skalowania jednej cechy, dodanie nowej kolumny czy zmiana hiperparametru może zmienić wagi wszystkich pozostałych cech. Dlatego w ML nie ma „małych, izolowanych zmian” – każda zmiana wymaga ponownej ewaluacji.
+
 ---
 
 ## 2. Cykl życia modelu ML
@@ -166,6 +198,21 @@ graph LR
 | Czy możecie odtworzyć model sprzed 3 miesięcy? | Nie | Tak (DVC/MLflow) | Tak + pełny audit trail |
 | Ile czasu zajmuje wdrożenie nowego modelu? | Dni–tygodnie | Godziny | Minuty |
 | Kto monitoruje model w produkcji? | Nikt | Zespół ML | Automatyczny system |
+
+
+### Pętle sprzężenia zwrotnego (feedback loops)
+
+Model produkcyjny **wpływa na dane**, na których będzie trenowany w przyszłości. Przykład: system rekomendacji pokazuje głównie popularne produkty → użytkownicy klikają głównie w nie → kolejny model uczy się, że tylko one są ważne.
+
+```mermaid
+flowchart LR
+    M[Model v1] -->|rekomendacje| U[Użytkownicy]
+    U -->|kliknięcia\n(tylko w to, co pokazano)| D[Nowe dane]
+    D -->|retrening| M2[Model v2]
+    M2 -.->|wzmacnia ten sam\nbias| U
+```
+
+Sposoby ograniczania: eksploracja (np. część ruchu z losowymi rekomendacjami), logowanie prawdopodobieństwa pokazania elementu (*propensity*) i korekta wag, grupy kontrolne bez modelu.
 
 ---
 
@@ -272,6 +319,55 @@ graph LR
 > **Kiedy:** po omówieniu sekcji 4.2 i 4.3.  
 > **Co pokazać:** mały dryft (0.1) nie jest istotny statystycznie, a duży jest. W części concept drift test KS nic nie wykrywa, mimo że accuracy spada z ~1.0 do ~0.5. Wykres histogramów zapisuje się w `outputs/data_drift.png`. Ćwiczenie: zmień parametry rozkładu i zapytaj studentów, od jakiego przesunięcia test zaczyna wykrywać dryft.
 
+
+### 4.4 Taksonomia dryftu
+
+Z punktu widzenia rozkładu łącznego $P(X, y) = P(y \mid X)\,P(X)$ wyróżniamy:
+
+| Rodzaj | Co się zmienia | Przykład | Jak wykryć |
+|---|---|---|---|
+| **Covariate shift** (data drift) | $P(X)$ | nowa grupa wiekowa klientów | testy statystyczne na cechach (KS, PSI, χ²) – bez etykiet |
+| **Prior / label shift** | $P(y)$ | odsetek oszustw rośnie z 1% do 5% | rozkład predykcji, później rozkład etykiet |
+| **Concept drift** | $P(y \mid X)$ | pandemia zmienia zachowania zakupowe | tylko metryki jakości – wymaga etykiet |
+| **Schema / upstream drift** | format danych | kolumna w złotych → w groszach | walidacja schematu i zakresów |
+
+Dryft może być **nagły** (zmiana przepisów), **stopniowy** (inflacja), **cykliczny** (sezonowość) lub **przejściowy** (jednorazowy incydent):
+
+```mermaid
+xychart-beta
+    title "Jakość modelu w czasie – dryft stopniowy"
+    x-axis [T1, T2, T3, T4, T5, T6, T7, T8]
+    y-axis "Accuracy" 0.5 --> 1.0
+    line [0.92, 0.91, 0.90, 0.87, 0.84, 0.80, 0.76, 0.72]
+```
+
+#### Population Stability Index (PSI)
+
+Obok testu KS w branży (np. bankowość) popularny jest PSI – działa na przedziałach (binach) i jest łatwy w interpretacji:
+
+$$PSI = \sum_{i=1}^{k} (p_i^{cur} - p_i^{ref}) \cdot \ln\frac{p_i^{cur}}{p_i^{ref}}$$
+
+```python
+import numpy as np
+
+def psi(reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
+    edges = np.quantile(reference, np.linspace(0, 1, bins + 1))
+    edges[0], edges[-1] = -np.inf, np.inf
+    ref = np.histogram(reference, edges)[0] / len(reference)
+    cur = np.histogram(current, edges)[0] / len(current)
+    ref, cur = np.clip(ref, 1e-6, None), np.clip(cur, 1e-6, None)
+    return float(np.sum((cur - ref) * np.log(cur / ref)))
+
+rng = np.random.default_rng(0)
+ref = rng.normal(0, 1, 10_000)
+print(f"brak dryftu:  {psi(ref, rng.normal(0, 1, 5000)):.3f}")
+print(f"duży dryft:   {psi(ref, rng.normal(0.5, 1.2, 5000)):.3f}")
+```
+
+Reguła kciuka: **PSI < 0.1** – brak istotnej zmiany, **0.1–0.25** – umiarkowana (obserwuj), **> 0.25** – istotna zmiana (rozważ retrening).
+
+> **Uwaga:** przy bardzo dużych próbkach testy statystyczne (KS) wykrywają nawet nieistotne biznesowo różnice (p-value → 0). Dlatego w praktyce łączy się p-value z miarą wielkości efektu (statystyka KS, PSI, odległość Wassersteina).
+
 ---
 
 ## 5. Architektura systemu MLOps
@@ -338,6 +434,20 @@ graph TB
 | Model Serving | BentoML, Seldon | Vertex AI Endpoints |
 | Monitoring | Evidently AI, Prometheus | Vertex AI Model Monitoring |
 | CI/CD | GitHub Actions, Jenkins | Cloud Build |
+
+
+### Jak dobierać narzędzia? Build vs Buy
+
+```mermaid
+flowchart TD
+    A[Potrzebna funkcja MLOps] --> B{Czy to przewaga\nkonkurencyjna firmy?}
+    B -->|Tak| C[Buduj / rozszerzaj open source]
+    B -->|Nie| D{Czy zespół ma\nludzi do utrzymania?}
+    D -->|Nie| E[Usługa zarządzana\nSageMaker, Vertex AI]
+    D -->|Tak| F[Open source\nMLflow, DVC, Airflow]
+```
+
+Kryteria wyboru: koszt utrzymania, integracja z istniejącym stosem (chmura, CI/CD), vendor lock-in, wymagania bezpieczeństwa (dane nie mogą opuszczać firmy), dojrzałość społeczności. Dobra praktyka: **zaczynać od najprostszego rozwiązania** (np. MLflow + DVC + GitHub Actions) i dokładać narzędzia dopiero, gdy pojawi się konkretny problem.
 
 ---
 
@@ -459,6 +569,51 @@ print(f"Metryki: {prod.metrics}")
 > **▶️ Demo na żywo:** `python lectures/scripts/lecture_01/03_simple_mlops_system.py`  
 > **Kiedy:** po przykładzie z sekcji 8, jako jego rozbudowana, działająca wersja.  
 > **Co pokazać:** modele v1 i v2 trafiają na produkcję, a słabszy v3 zostaje w `staging` (bramka jakości). Następnie pokaż plik `outputs/model_registry/registry.json` i zapowiedz, że w wykładzie 3 tę samą rolę pełni MLflow Model Registry.
+
+
+### Testowanie systemów ML – piramida testów
+
+System ML wymaga testów na kilku poziomach (por. *ML Test Score*, Breck i in., Google 2017):
+
+```mermaid
+flowchart TB
+    T4["Monitoring produkcyjny\n(dryft, latencja, metryki biznesowe)"]
+    T3["Testy modelu\n(jakość ≥ próg, brak regresji, fairness)"]
+    T2["Testy danych\n(schemat, zakresy, braki, rozkłady)"]
+    T1["Testy jednostkowe kodu\n(feature engineering, preprocessing)"]
+    T1 --> T2 --> T3 --> T4
+```
+
+Przykład testów (pytest) dla systemu z sekcji 8:
+
+```python
+import numpy as np
+import pytest
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score
+
+@pytest.fixture(scope="module")
+def data():
+    return make_classification(n_samples=1000, random_state=42)
+
+def test_feature_shape(data):                      # test danych
+    X, y = data
+    assert X.shape[1] == 20 and not np.isnan(X).any()
+
+def test_model_quality_threshold(data):            # test jakości
+    X, y = data
+    model = LogisticRegression(max_iter=500).fit(X[:800], y[:800])
+    assert f1_score(y[800:], model.predict(X[800:])) >= 0.8
+
+def test_invariance_to_row_order(data):            # test behawioralny
+    X, y = data
+    model = LogisticRegression(max_iter=500).fit(X, y)
+    idx = np.random.default_rng(0).permutation(len(X))
+    assert (model.predict(X)[idx] == model.predict(X[idx])).all()
+```
+
+Typy testów behawioralnych (*CheckList*, Ribeiro i in. 2020): **invariance** (zmiana nieistotnej cechy nie zmienia predykcji), **directional expectation** (wzrost dochodu nie powinien zwiększać ryzyka kredytowego), **minimum functionality** (proste przypadki muszą działać).
 
 ---
 

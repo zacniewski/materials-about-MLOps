@@ -40,6 +40,49 @@ model_DO_UZYCIA.pkl   ← który to jest?!
 - Nie można odtworzyć eksperymentu.
 - Trudno porównać różne podejścia.
 
+
+### Co dokładnie należy logować?
+
+Eksperyment jest powtarzalny tylko wtedy, gdy zapiszemy **wszystkie** jego wejścia i wyjścia:
+
+```mermaid
+flowchart LR
+    subgraph Wejścia
+        C[Kod\ncommit git]
+        D[Dane\nwersja / hash]
+        P[Parametry\nhiperparametry, seed]
+        E[Środowisko\nwersje bibliotek, sprzęt]
+    end
+    C & D & P & E --> R((Run))
+    subgraph Wyjścia
+        M[Metryki\nliczby, krzywe]
+        A[Artefakty\nwykresy, raporty]
+        MD[Model\n+ sygnatura]
+    end
+    R --> M & A & MD
+```
+
+| Kategoria | Przykłady | MLflow API |
+|---|---|---|
+| Parametry | `learning_rate`, `max_depth`, `seed` | `log_param(s)` |
+| Metryki | `roc_auc`, `loss` per epoka | `log_metric(s)` (z `step`) |
+| Tagi | `git_commit`, `data_hash`, `author` | `set_tag(s)` |
+| Artefakty | confusion matrix, feature importance | `log_artifact`, `log_figure` |
+| Dane | nazwa, źródło, digest zbioru | `log_input` |
+| Model | wytrenowany model, sygnatura | `mlflow.<flavor>.log_model` |
+
+### Cykl pracy eksperymentalnej
+
+```mermaid
+flowchart LR
+    H[Hipoteza\n„cecha X poprawi AUC”] --> EX[Eksperyment\nrun w MLflow]
+    EX --> AN[Analiza\nporównanie z baseline]
+    AN -->|odrzucona| H
+    AN -->|potwierdzona| REG[Rejestracja modelu]
+```
+
+Dobra praktyka: **zawsze zaczynaj od baseline'u** (np. model większościowy, regresja logistyczna) – bez punktu odniesienia nie wiadomo, czy złożony model wnosi wartość.
+
 ---
 
 ## 2. MLflow – platforma do śledzenia eksperymentów
@@ -245,6 +288,33 @@ best_model = mlflow.sklearn.load_model(f"runs:/{best_run_id}/model")
 > **Kiedy:** bezpośrednio po kodzie z sekcji 4.  
 > **Co pokazać:** ranking runów w terminalu, filtr `tags.model_type = ... and metrics.roc_auc > 0.9` (ta sama składnia działa w polu wyszukiwania UI) oraz zakładkę **Models** w UI z modelem `churn-classifier` i aliasem `champion`.
 
+
+### Czy różnica między runami jest istotna?
+
+Różnica AUC 0.871 vs 0.874 może wynikać wyłącznie z losowości podziału danych. Zanim ogłosisz „lepszy model”:
+1. Uruchom każdą konfigurację z **kilkoma seedami** lub w **k-fold CV** i porównuj średnią ± odchylenie.
+2. Użyj testu sparowanego (te same foldy) lub **bootstrapu** na zbiorze testowym.
+
+```python
+import numpy as np
+from sklearn.datasets import make_classification
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+from scipy import stats
+
+X, y = make_classification(n_samples=2000, n_features=20, random_state=0)
+cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=0)   # te same foldy!
+a = cross_val_score(RandomForestClassifier(random_state=0), X, y, cv=cv, scoring="roc_auc")
+b = cross_val_score(GradientBoostingClassifier(random_state=0), X, y, cv=cv, scoring="roc_auc")
+
+print(f"RF : {a.mean():.4f} ± {a.std():.4f}")
+print(f"GBM: {b.mean():.4f} ± {b.std():.4f}")
+t, p = stats.ttest_rel(a, b)
+print(f"sparowany t-test: p = {p:.3f} → {'różnica istotna' if p < 0.05 else 'brak dowodu na różnicę'}")
+```
+
+> Wyniki z CV warto logować w MLflow jako `roc_auc_mean` i `roc_auc_std` – wtedy porównanie w UI uwzględnia niepewność.
+
 ---
 
 ## 5. Organizacja eksperymentów – dobre praktyki
@@ -366,6 +436,33 @@ mlflow.log_artifact("/tmp/optimization_history.html")
 > **▶️ Demo na żywo:** `python lectures/scripts/lecture_03/03_hyperparameter_tuning.py --trials 15`  
 > **Kiedy:** po omówieniu integracji Optuna + MLflow.  
 > **Co pokazać:** w eksperymencie `churn-hpo` rozwiń run-rodzica z próbami jako runami zagnieżdżonymi, a następnie użyj **Compare → Parallel Coordinates**. Bez zainstalowanej Optuny skrypt użyje random search. Warto zestawić oba podejścia.
+
+
+### Strategie przeszukiwania hiperparametrów – teoria
+
+| Metoda | Idea | Zalety | Wady |
+|---|---|---|---|
+| Grid search | wszystkie kombinacje siatki | prosta, pełna | koszt rośnie wykładniczo z liczbą parametrów |
+| Random search | losowe punkty | lepiej pokrywa ważne wymiary (Bergstra & Bengio, 2012) | nie uczy się z poprzednich prób |
+| Bayesowska (TPE, GP) | model zastępczy przewiduje, gdzie szukać | mniej prób do dobrego wyniku | sekwencyjna, trudniej zrównoleglić |
+| Hyperband / ASHA | wczesne przerywanie słabych prób (pruning) | ogromna oszczędność czasu | wymaga metryki pośredniej (np. per epoka) |
+
+Dlaczego random search bije grid search? Gdy tylko jeden z dwóch parametrów jest istotny, siatka 3×3 testuje tylko **3** różne wartości ważnego parametru, a 9 losowych prób – **9** różnych wartości.
+
+```mermaid
+flowchart LR
+    S[Start] --> Q[Sampler proponuje\nhiperparametry]
+    Q --> T[Trening\n+ metryki pośrednie]
+    T --> PR{Pruner:\nczy próba rokuje?}
+    PR -->|nie| X[Przerwij próbę]
+    PR -->|tak| F[Dokończ i zapisz wynik]
+    X & F --> U[Aktualizacja modelu\nzastępczego TPE]
+    U --> Q
+```
+
+**TPE (Tree-structured Parzen Estimator)** – domyślny sampler Optuny – dzieli dotychczasowe próby na „dobre” (górne γ%, np. 25%) i „złe”, modeluje gęstości $l(x)$ i $g(x)$ hiperparametrów w obu grupach i proponuje punkty maksymalizujące $l(x)/g(x)$.
+
+> **Pułapka:** strojenie na zbiorze testowym. Hiperparametry wybieramy na walidacji (lub CV), a test używamy **raz**, na końcu – inaczej wynik testowy jest optymistycznie obciążony.
 
 ---
 
@@ -510,6 +607,31 @@ with mlflow.start_run():
 > **Kiedy:** po sekcji 8. Uzupełnia też sekcję 10 (logowanie nieudanych eksperymentów).  
 > **Co pokazać:** dwa runy z `seed=42` dają identyczne `roc_auc`. Pokaż w UI tagi `git_commit`, `data_hash` i wersje bibliotek oraz run `failing-run` ze statusem FAILED.
 
+
+### Źródła niedeterminizmu
+
+| Źródło | Przykład | Jak kontrolować |
+|---|---|---|
+| Generatory losowe | inicjalizacja wag, podział danych, bootstrap | `random`, `numpy`, `torch` seed, `random_state` |
+| Dane | ktoś nadpisał plik CSV | DVC, hash danych w tagu runu |
+| Kolejność danych | `SELECT` bez `ORDER BY`, wielowątkowe ładowanie | sortowanie, seed `DataLoader` |
+| Biblioteki | inna wersja sklearn zmienia domyślne parametry | `requirements.txt` z wersjami, Docker |
+| Sprzęt | niedeterministyczne operacje cuDNN na GPU | `torch.use_deterministic_algorithms(True)` |
+| Arytmetyka | inna kolejność sumowania float w obliczeniach równoległych | akceptacja tolerancji (np. ±1e-6) |
+
+### Lineage – pochodzenie modelu
+
+Pełny rodowód pozwala odpowiedzieć na pytanie audytora: *„Na jakich danych i jakim kodem powstał model, który odrzucił ten wniosek kredytowy?”*
+
+```mermaid
+flowchart LR
+    D[(data v3\nmd5: a1b2…)] --> R[Run 7f3c\ncommit 9e1d]
+    C[train.py\ncommit 9e1d] --> R
+    R --> M[Model churn v5]
+    M --> P[Produkcja\nalias champion]
+    P --> PR[Predykcja #123]
+```
+
 ---
 
 ## 9. Weights & Biases (W&B) – alternatywa dla MLflow
@@ -562,6 +684,32 @@ wandb.finish()
 | Integracje | Szerokie | Bardzo szerokie |
 | Kolaboracja | Ograniczona | Wbudowana |
 | Model Registry | Tak | Tak |
+
+
+### Model Registry – cykl życia wersji modelu
+
+```mermaid
+stateDiagram-v2
+    [*] --> Zarejestrowany: register_model()
+    Zarejestrowany --> Challenger: walidacja OK
+    Challenger --> Champion: lepszy od obecnego\n(test A/B, shadow)
+    Champion --> Zarchiwizowany: nowy champion
+    Challenger --> Zarchiwizowany: przegrał porównanie
+    Zarchiwizowany --> Champion: rollback
+```
+
+W MLflow ≥ 2.9 zamiast etapów (`Staging`/`Production`, obecnie przestarzałe) używa się **aliasów** (`champion`, `challenger`) i tagów. Kod serwujący ładuje model po aliasie, więc wdrożenie i rollback to tylko przestawienie aliasu:
+
+```python
+from mlflow import MlflowClient
+import mlflow
+
+client = MlflowClient()
+client.set_registered_model_alias("churn-classifier", "champion", version=5)
+model = mlflow.pyfunc.load_model("models:/churn-classifier@champion")
+# rollback:
+client.set_registered_model_alias("churn-classifier", "champion", version=4)
+```
 
 ---
 

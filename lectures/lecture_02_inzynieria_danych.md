@@ -85,6 +85,36 @@ graph TB
     DLH --> RT[Real-time\nQueries]
 ```
 
+
+### Architektura medalionowa (Bronze / Silver / Gold)
+
+Popularny wzorzec organizacji danych w Lakehouse – dane przechodzą przez kolejne warstwy jakości:
+
+```mermaid
+flowchart LR
+    SRC[Źródła] --> B[(Bronze\nsurowe, niezmienione\nappend-only)]
+    B -->|czyszczenie,\ndeduplikacja, typy| S[(Silver\noczyszczone,\nzintegrowane)]
+    S -->|agregacje,\ncechy| G[(Gold\ngotowe do użycia:\nraporty, cechy ML)]
+    G --> ML[Trening ML]
+    G --> BI[Dashboardy]
+```
+
+| Warstwa | Zawartość | Kto używa | Zasada |
+|---|---|---|---|
+| Bronze | kopia danych źródłowych | inżynierowie danych | nigdy nie nadpisujemy – możliwy pełny replay |
+| Silver | dane oczyszczone, ujednolicone typy | analitycy, DS | jedna „wersja prawdy” dla encji |
+| Gold | agregaty i cechy biznesowe | modele ML, BI | zoptymalizowane pod konkretne użycie |
+
+Zaleta dla ML: gdy zmienimy logikę feature engineeringu, możemy **odtworzyć** warstwy Silver/Gold z Bronze i wytrenować model na historycznych danych z nowymi cechami.
+
+### OLTP vs OLAP
+
+| | OLTP (np. PostgreSQL) | OLAP (np. BigQuery) |
+|---|---|---|
+| Operacje | wiele małych zapisów/odczytów | duże skany i agregacje |
+| Układ danych | wierszowy | kolumnowy |
+| Rola w ML | źródło danych, online serving | trening, analityka, feature engineering |
+
 ---
 
 ## 3. Formaty danych dla ML
@@ -180,6 +210,56 @@ sequenceDiagram
 - Zachowanie surowych danych (możliwość ponownego przetworzenia).
 - Wykorzystanie mocy obliczeniowej magazynu danych.
 - Łatwiejsze debugowanie.
+
+
+### Orkiestracja pipeline'ów: DAG, idempotentność, backfill
+
+Pipeline danych to **skierowany graf acykliczny (DAG)** zadań. Orkiestrator (Airflow, Prefect, Dagster) pilnuje kolejności, ponowień i harmonogramu.
+
+```mermaid
+flowchart LR
+    E1[extract_db] --> V[validate]
+    E2[extract_api] --> V
+    V --> T[transform]
+    T --> F[build_features]
+    F --> TR[train_model]
+    F --> RP[report]
+```
+
+Kluczowe właściwości dobrego zadania w pipeline:
+- **Idempotentność** – wielokrotne uruchomienie dla tego samego okresu daje ten sam wynik (np. `INSERT OVERWRITE partition=2024-01-15` zamiast `INSERT`).
+- **Determinizm** – wynik zależy tylko od wejścia i parametrów (np. daty logicznej), a nie od „teraz”.
+- **Atomowość** – zapis do lokalizacji tymczasowej, potem zamiana (rename); brak „połówek” danych.
+- **Backfill** – możliwość przeliczenia historii dla nowej logiki.
+
+Przykład szkieletu DAG w Airflow (TaskFlow API):
+
+```python
+from datetime import datetime
+from airflow.decorators import dag, task
+
+@dag(schedule="@daily", start_date=datetime(2024, 1, 1), catchup=True)
+def churn_features():
+    @task
+    def extract(ds=None) -> str:            # ds = data logiczna, np. "2024-01-15"
+        path = f"s3://lake/bronze/events/date={ds}/"
+        # ... kopiowanie danych dla JEDNEGO dnia -> idempotentne
+        return path
+
+    @task
+    def validate(path: str) -> str:
+        # ... uruchom oczekiwania; wyjątek zatrzymuje pipeline
+        return path
+
+    @task
+    def build_features(path: str, ds=None) -> None:
+        # ... nadpisz partycję gold/features/date={ds}
+        ...
+
+    build_features(validate(extract()))
+
+churn_features()
+```
 
 ---
 
@@ -367,6 +447,35 @@ flowchart TD
 > **Kiedy:** po przykładzie Great Expectations.  
 > **Co pokazać:** te same oczekiwania (w tym parametr `mostly`) zaimplementowane w czystym pandas. Na danych z błędami walidacja nie przechodzi, a skrypt zwraca kod 1, co w CI/CD zatrzymuje pipeline.
 
+
+### Wymiary jakości danych
+
+| Wymiar | Pytanie | Przykładowa reguła |
+|---|---|---|
+| Kompletność | Czy brakuje wartości/wierszy? | `age` nie-null w ≥ 99% |
+| Poprawność | Czy wartości są w dozwolonym zakresie? | `0 ≤ age ≤ 120` |
+| Spójność | Czy dane są zgodne między systemami? | suma zamówień = suma w księgowości |
+| Unikalność | Czy nie ma duplikatów? | `customer_id` unikalny |
+| Aktualność | Czy dane są świeże? | ostatni rekord < 24 h |
+| Stabilność rozkładu | Czy rozkład się nie zmienił? | PSI(`income`) < 0.2 |
+
+### Training-serving skew
+
+Najczęstsze źródło „model działał offline, a na produkcji nie”: **cechy liczone inaczej podczas treningu i serwowania**.
+
+```mermaid
+flowchart LR
+    subgraph Trening
+        H[(Dane historyczne)] --> P1["feature code\n(Python / pandas)"] --> M[Model]
+    end
+    subgraph Produkcja
+        R[Request] --> P2["feature code\n(Java / SQL – przepisany!)"] --> M2[Model]
+    end
+    P1 -. "różnice: zaokrąglenia,\nstrefy czasowe, braki" .-> P2
+```
+
+Rozwiązania: jedna implementacja cech (Feature Store, wspólna biblioteka), zapis cech użytych przy predykcji (*log & wait*) i porównywanie ich z cechami treningowymi.
+
 ---
 
 ## 7. Feature Store – centralne repozytorium cech
@@ -464,6 +573,51 @@ online_features = store.get_online_features(
 
 print(online_features)
 ```
+
+
+### Point-in-time correctness – poprawność w czasie
+
+Budując zbiór treningowy, dla każdego zdarzenia wolno użyć **tylko cech znanych w chwili tego zdarzenia**. Zwykły `JOIN` po `user_id` wziąłby najnowszą wartość cechy – czyli informację z przyszłości (data leakage).
+
+```mermaid
+gantt
+    dateFormat YYYY-MM-DD
+    title Cechy użytkownika 1001 vs moment etykiety
+    section Wartości cechy
+    avg_order=50   :a1, 2024-01-01, 10d
+    avg_order=80   :a2, 2024-01-11, 10d
+    avg_order=200  :a3, 2024-01-21, 10d
+    section Zdarzenie
+    etykieta (15.01) → poprawnie avg_order=80 :milestone, 2024-01-15, 0d
+```
+
+Feature Store realizuje to przez *point-in-time join*. W pandas ten sam efekt daje `merge_asof`:
+
+```python
+import pandas as pd
+
+features = pd.DataFrame({
+    "user_id": [1001, 1001, 1001],
+    "ts": pd.to_datetime(["2024-01-01", "2024-01-11", "2024-01-21"]),
+    "avg_order": [50, 80, 200],
+})
+labels = pd.DataFrame({"user_id": [1001], "ts": pd.to_datetime(["2024-01-15"]), "churn": [1]})
+
+wrong = labels.merge(features.sort_values("ts").groupby("user_id").tail(1), on="user_id")
+right = pd.merge_asof(labels.sort_values("ts"), features.sort_values("ts"),
+                      on="ts", by="user_id", direction="backward")
+print(wrong[["avg_order"]].iloc[0].item(), "← wyciek z przyszłości")   # 200
+print(right[["avg_order"]].iloc[0].item(), "← poprawnie")              # 80
+```
+
+### Online vs offline store
+
+| | Offline store | Online store |
+|---|---|---|
+| Cel | zbiory treningowe, batch scoring | predykcja w czasie rzeczywistym |
+| Technologia | Parquet, BigQuery | Redis, DynamoDB |
+| Latencja | minuty | milisekundy |
+| Dane | pełna historia | tylko najnowsza wartość cechy |
 
 ---
 
@@ -613,6 +767,48 @@ def process_predictions(model):
         print(f"User {data['user_id']}: "
               f"churn={'TAK' if prediction else 'NIE'} "
               f"(p={probability:.2%})")
+```
+
+
+### Architektury Lambda i Kappa
+
+```mermaid
+flowchart LR
+    subgraph Lambda
+        S1[Strumień] --> B1[Batch layer\nSpark, codziennie]
+        S1 --> SP1[Speed layer\nFlink, na bieżąco]
+        B1 --> SV1[Serving: scalanie wyników]
+        SP1 --> SV1
+    end
+    subgraph Kappa
+        S2[Log zdarzeń\nKafka] --> SP2[Jeden silnik\nstreamingowy]
+        SP2 --> SV2[Serving]
+        S2 -. replay historii .-> SP2
+    end
+```
+
+- **Lambda** – dwie ścieżki (dokładna batch + szybka streaming); wada: dwie implementacje tej samej logiki.
+- **Kappa** – tylko streaming; historię przelicza się, odtwarzając log zdarzeń.
+
+### Okna czasowe w przetwarzaniu strumieniowym
+
+Cechy strumieniowe (np. „liczba transakcji w ostatnich 10 min”) liczy się w oknach:
+- **tumbling** – rozłączne okna stałej długości (00:00–00:10, 00:10–00:20),
+- **sliding/hopping** – okna nakładające się (10 min co 1 min),
+- **session** – okno zamykane po okresie bezczynności użytkownika.
+
+Ważne rozróżnienie: **event time** (kiedy zdarzenie zaszło) vs **processing time** (kiedy je przetworzono). Spóźnione zdarzenia obsługuje się *watermarkami*.
+
+```python
+import pandas as pd
+
+tx = pd.DataFrame({
+    "ts": pd.to_datetime(["10:00", "10:03", "10:07", "10:12", "10:14"], format="%H:%M"),
+    "amount": [20, 35, 500, 15, 40],
+}).set_index("ts")
+
+print(tx["amount"].resample("10min").sum())          # okna tumbling
+print(tx["amount"].rolling("10min").count())         # okno przesuwne: liczba tx w ost. 10 min
 ```
 
 ---
