@@ -339,6 +339,22 @@ graph TD
     EXP3 --> R8[Run: GBM optuna trial N]
 ```
 
+**Objaśnienie diagramu** – trzy poziomy organizacji pracy:
+
+- **Projekt** (`churn-prediction`) – problem biznesowy, który rozwiązujemy, tu przewidywanie odejścia klienta (*churn*). MLflow nie ma osobnego obiektu „projekt”, więc zwykle jest to wspólny prefiks nazw eksperymentów (np. `churn-prediction/baseline-models`) albo osobny serwer lub workspace dla zespołu.
+- **Eksperyment** (MLflow *Experiment*) – grupa runów, które odpowiadają na **jedno pytanie badawcze**. Runy w jednym eksperymencie powinny dać się sensownie porównać: ta sama metryka, ten sam podział danych.
+  - **`baseline-models`** – punkt odniesienia. Proste modele z domyślnymi parametrami na podstawowym zestawie cech. Pytanie: jaki wynik da się osiągnąć „najprostszym” podejściem?
+  - **`feature-engineering-v2`** – sprawdzamy nowy zestaw cech (wersja 2, np. agregaty z 30 dni, staż klienta). Pytanie: czy nowe cechy poprawiają wynik względem baseline'u przy tych samych modelach?
+  - **`hyperparameter-tuning`** – strojenie hiperparametrów najlepszego modelu. Pytanie: ile zyskamy na doborze parametrów?
+- **Run** – pojedyncze uruchomienie treningu z konkretnymi parametrami, danymi i kodem. Zapisuje parametry, metryki, artefakty i tagi.
+  - **LR** (*Logistic Regression*) – regresja logistyczna: liniowy, szybki i interpretowalny model, klasyczny baseline.
+  - **RF** (*Random Forest*) – las losowy: zespół drzew decyzyjnych uczonych na losowych podzbiorach danych i cech. Wynik to głosowanie drzew.
+  - **GBM** (*Gradient Boosting Machine*) – gradient boosting: drzewa budowane sekwencyjnie, każde poprawia błędy poprzednich. Często najlepszy na danych tabelarycznych.
+  - **`+ new features`** – ten sam model co w baseline, ale z cechami v2. Porównanie np. `RF` z `RF + new features` pokazuje wpływ samych cech.
+  - **`optuna trial 1…N`** – kolejne próby (*trials*) strojenia w Optunie (sekcja 6). Każda próba to run z innym zestawem hiperparametrów. W praktyce są to **runy zagnieżdżone** (`nested=True`) pod jednym runem-rodzicem całego badania, więc UI nie zaśmieca się setkami pozycji.
+
+Dlaczego taki podział? Każdy eksperyment zmienia **jeden czynnik**: najpierw model, potem cechy, potem hiperparametry. Dzięki temu wiadomo, skąd pochodzi poprawa wyniku. Najlepszy run z każdego etapu jest punktem startowym następnego, a jego wynik porównujemy zawsze z baseline'em.
+
 ### Konwencje nazewnictwa
 
 ```python
