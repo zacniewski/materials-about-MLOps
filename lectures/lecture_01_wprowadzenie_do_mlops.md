@@ -135,6 +135,15 @@ flowchart LR
     G -->|Model degradacja| D
 ```
 
+> **Model decay (degradacja modelu)** – stopniowy spadek jakości predykcji modelu w produkcji, mimo że sam model (kod i wagi) się nie zmienił. Przyczyną jest to, że **świat się zmienia, a model pozostaje „zamrożony”** w stanie z chwili treningu.
+>
+> - **Przyczyny:** data drift (zmienia się rozkład wejść, $P(X)$), concept drift (zmienia się relacja cech z etykietą, $P(y \mid X)$), zmiany w źródłach danych (schema/upstream drift) oraz pętle sprzężenia zwrotnego.
+> - **Przykład:** model rekomendacji odzieży wytrenowany latem ma w lutym coraz niższy CTR, bo zmieniły się sezon, trendy i asortyment. Accuracy modelu wykrywania fraudów spada z 0.92 do 0.75 w ciągu pół roku, bo oszuści zmieniają techniki.
+> - **Jak wykryć:** monitoring metryk jakości (gdy dostępne są etykiety), a bez etykiet pośrednio przez dryft cech i rozkładu predykcji (sekcje 4.2–4.4).
+> - **Jak reagować:** retrening na świeżych danych według harmonogramu lub po przekroczeniu progu (strzałka „Model degradacja” → „Trening modelu” na diagramie), w razie potrzeby powrót do zbierania danych lub zmiana cech.
+>
+> Wykres spadku accuracy w czasie przy dryfcie stopniowym jest w sekcji 4.4.
+
 ### Fazy cyklu życia
 
 1. **Definicja problemu** – co chcemy przewidzieć? Jaka jest metryka sukcesu?
@@ -260,6 +269,51 @@ experiment_config = {
 ### 4.2 Data Drift
 
 **Data drift** – rozkład danych wejściowych zmienia się w czasie.
+
+#### Przykład: scoring kredytowy w banku
+
+Bank trenuje model scoringowy na wnioskach z lat 2022–2023. Większość wnioskodawców to wtedy osoby w wieku 35–55 lat, z medianą dochodu ok. 6 000 zł, składające wnioski w oddziale. W 2024 r. bank uruchamia wnioski przez aplikację mobilną i kampanię w social mediach. Rozkład cech wejściowych się zmienia:
+
+| Cecha | Dane treningowe (2022–2023) | Dane produkcyjne (2024) | Zmiana |
+|---|---|---|---|
+| Wiek (średnia) | 44 lata | 29 lat | młodsi klienci |
+| Dochód (mediana) | 6 000 zł | 4 200 zł | niższe dochody |
+| Staż pracy (średnia) | 11 lat | 3 lata | krótsza historia |
+| Kanał `mobile` | 10% | 70% | nowy dominujący kanał |
+
+Reguła „spłaca kredyt, jeśli…”, czyli $P(y \mid X)$, mogła się nie zmienić. Zmieniło się $P(X)$: model widzi teraz głównie przypadki, których w treningu było mało. Tam ma mało danych, więc jego predykcje są mniej pewne i gorzej skalibrowane. Ważne jest to, że **data drift da się wykryć od razu, bez etykiet**: wystarczy porównać rozkłady cech, a na informację, czy klient spłacił kredyt, trzeba by czekać miesiącami.
+
+```mermaid
+flowchart LR
+    A["Trening 2022–2023\nwiek ≈ 44, oddział"] --> M[Model scoringowy]
+    B["Produkcja 2024\nwiek ≈ 29, mobile"] --> M
+    B --> T{"Test KS / PSI\nna cechach"}
+    A --> T
+    T -->|dryft wykryty| R["Alert → analiza\n→ retrening na nowych danych"]
+```
+
+Inne typowe przykłady data drift:
+- **E-commerce:** w Black Friday rośnie średnia wartość koszyka i udział nowych klientów.
+- **Czujniki IoT:** po wymianie czujnika na nowy model odczyty temperatury są przesunięte o +2°C.
+- **Rozpoznawanie obrazów:** zdjęcia z nowego modelu smartfona mają inną jasność i rozdzielczość.
+
+Kod poniżej odtwarza przykład bankowy dla cechy „wiek”:
+
+```python
+import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(42)
+age_train = rng.normal(44, 9, 5000).clip(18, 80)  # wnioski 2022–2023
+age_prod = rng.normal(29, 6, 1000).clip(18, 80)   # wnioski 2024 (mobile)
+
+stat, p = stats.ks_2samp(age_train, age_prod)
+print(f"KS = {stat:.3f}, p-value = {p:.2e}")      # KS ≈ 0.8, p ≈ 0 → dryft
+print(f"Udział klientów < 30 lat: trening {np.mean(age_train < 30):.0%}, "
+      f"produkcja {np.mean(age_prod < 30):.0%}")
+```
+
+Poniższa funkcja to ogólny detektor, który można stosować do każdej cechy numerycznej:
 
 ```python
 import numpy as np
