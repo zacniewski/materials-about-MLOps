@@ -405,6 +405,9 @@ graph TB
 - **Data Lake** – warstwa surowych danych (często w formacie plikowym), przechowująca pełną historię danych do analizy i retreningu.
 - **Data Warehouse** – ustrukturyzowana warstwa analityczna po czyszczeniu i transformacjach, używana do raportowania i przygotowania cech.
 - **Feature Store** – centralne repozytorium cech z jednolitą definicją obliczeń dla treningu i inferencji, które ogranicza train/serve skew.
+  - **Trening** – etap, w którym model uczy się na danych historycznych. Cechy liczone są wsadowo (batch) dla wielu rekordów naraz, np. „liczba transakcji klienta w ostatnich 30 dniach” wyliczona dla całego zbioru z ubiegłego roku.
+  - **Inferencja** (serving, predykcja) – użycie wytrenowanego modelu na produkcji do przewidywania dla nowych danych, często w czasie rzeczywistym. Te same cechy trzeba policzyć dla pojedynczego żądania, np. dla klienta, który właśnie składa zamówienie.
+  - **Train/serve skew** (training-serving skew) – rozbieżność między cechami widzianymi przez model w treningu a cechami podawanymi mu na produkcji. Zwykle wynika z dwóch różnych implementacji tej samej cechy (np. pandas w treningu, SQL lub Java w serwisie) albo z innych źródeł danych. Przykłady to inne zaokrąglenia, strefy czasowe, inna obsługa braków czy inne okno czasowe. Model dobrze wypada offline, a na produkcji działa gorzej, choć sam się nie zmienił. Feature Store temu przeciwdziała: cecha jest zdefiniowana raz i z tej samej definicji korzysta trening (offline store) i inferencja (online store). Szerzej w wykładzie 2.
 
 #### ML Platform
 - **Experiment Tracking** – rejestr eksperymentów (parametry, metryki, artefakty, wersje danych i kodu), który zapewnia porównywalność i reprodukowalność.
