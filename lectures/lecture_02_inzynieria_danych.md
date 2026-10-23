@@ -579,6 +579,37 @@ print(online_features)
 
 Budując zbiór treningowy, dla każdego zdarzenia wolno użyć **tylko cech znanych w chwili tego zdarzenia**. Zwykły `JOIN` po `user_id` wziąłby najnowszą wartość cechy – czyli informację z przyszłości (data leakage).
 
+#### Dlaczego to ważne?
+
+Model na produkcji zawsze dostaje cechy „ze stanu na teraz”, czyli z przeszłości względem chwili, dla której przewiduje. Zbiór treningowy musi odtwarzać dokładnie tę sytuację. Jeśli w treningu do zdarzenia z 15 stycznia dołączymy cechę policzoną 21 stycznia, model uczy się z informacji, której w momencie decyzji nikt jeszcze nie miał. Skutki:
+
+- **zawyżone metryki offline** – walidacja wygląda świetnie, bo model „zna przyszłość”;
+- **spadek jakości po wdrożeniu** – na produkcji tej informacji nie ma, więc model działa gorzej, niż obiecywały testy;
+- **trudna diagnoza** – kod jest poprawny, dane też, błąd tkwi tylko w sposobie złączenia w czasie.
+
+To szczególny przypadek data leakage (sekcja 10) i jedna z przyczyn training-serving skew (sekcja 6).
+
+#### Kluczowe pojęcia
+
+| Pojęcie | Znaczenie | Przykład |
+|---|---|---|
+| **Encja** (entity) | obiekt, którego dotyczą cechy; klucz złączenia | `user_id = 1001` |
+| **Czas zdarzenia** (event timestamp) | chwila, dla której robimy predykcję i której dotyczy etykieta | wniosek złożony 15.01 |
+| **Czas cechy** (feature timestamp) | chwila, od której dana wartość cechy obowiązuje | `avg_order = 80` od 11.01 |
+| **Czas dostępności** (created / ingestion timestamp) | chwila, w której wartość faktycznie trafiła do systemu | wyliczona nocnym jobem 12.01 o 02:00 |
+| **TTL** (time-to-live) | jak długo wartość cechy uznajemy za aktualną | cecha starsza niż 30 dni = brak (`NaN`) |
+
+Reguła point-in-time join: dla każdego wiersza etykiety `(encja, t)` wybierz **ostatnią wartość cechy z `czas_cechy ≤ t`** (a w wersji ostrożnej `czas_dostępności ≤ t`), o ile nie jest starsza niż TTL. Jest to tzw. złączenie *as-of* („według stanu na dzień”).
+
+```mermaid
+flowchart LR
+    L["Etykieta\nuser 1001, t = 15.01"] --> Q{"Wartości cechy\nz czasem ≤ 15.01"}
+    F1["01.01: 50"] --> Q
+    F2["11.01: 80"] --> Q
+    F3["21.01: 200\n(przyszłość – odrzucona)"] -.->|"✗"| Q
+    Q -->|"najnowsza = 80\n(w granicach TTL)"| R["Wiersz treningowy\navg_order = 80"]
+```
+
 ```mermaid
 gantt
     dateFormat YYYY-MM-DD
@@ -609,6 +640,65 @@ right = pd.merge_asof(labels.sort_values("ts"), features.sort_values("ts"),
 print(wrong[["avg_order"]].iloc[0].item(), "← wyciek z przyszłości")   # 200
 print(right[["avg_order"]].iloc[0].item(), "← poprawnie")              # 80
 ```
+
+Co robi ten kod:
+- `wrong` – bierze **ostatni** znany wiersz cechy dla użytkownika (21.01, wartość 200) i dokleja go do etykiety z 15.01. Tak działa naiwny `JOIN` z tabelą „aktualnych” cech.
+- `right` – `merge_asof` dla każdej etykiety szuka po `user_id` (`by=`) wiersza cechy o największym `ts`, które jest **≤** czasowi etykiety (`direction="backward"`). Obie tabele muszą być posortowane po kolumnie czasu.
+
+#### Pułapka: opóźnienie dostępności i nieaktualne cechy
+
+Cecha z czasem 11.01 mogła zostać policzona dopiero następnego dnia (np. dzienny job wsadowy). Jeśli zdarzenie było 11.01 o 10:00, na produkcji tej wartości jeszcze by nie było. Dlatego złączenie robi się po **czasie dostępności**, a nie po czasie cechy. Drugi problem to wartości bardzo stare – parametr `tolerance` odpowiada TTL:
+
+```python
+import pandas as pd
+
+features = pd.DataFrame({
+    "user_id": [1001, 1001],
+    "feature_ts": pd.to_datetime(["2024-01-01", "2024-01-11"]),
+    "avg_order": [50, 80],
+})
+# cechy liczone nocnym jobem – dostępne dzień później o 02:00
+features["available_ts"] = features["feature_ts"] + pd.Timedelta(days=1, hours=2)
+
+labels = pd.DataFrame({
+    "user_id": [1001, 1001, 1001],
+    "ts": pd.to_datetime(["2024-01-11 10:00", "2024-01-15 00:00", "2024-03-01 00:00"]),
+})
+
+result = pd.merge_asof(
+    labels.sort_values("ts"),
+    features.sort_values("available_ts"),
+    left_on="ts", right_on="available_ts", by="user_id",
+    direction="backward",
+    tolerance=pd.Timedelta(days=30),   # TTL: starsze wartości → NaN
+)
+print(result[["ts", "avg_order"]])
+# 2024-01-11 10:00 → 50   (wartość 80 jeszcze niedostępna)
+# 2024-01-15       → 80
+# 2024-03-01       → NaN  (ostatnia wartość starsza niż 30 dni)
+```
+
+Odpowiednik w SQL (np. BigQuery, Snowflake), gdy brak `ASOF JOIN`:
+
+```sql
+SELECT l.user_id, l.ts, f.avg_order
+FROM labels l
+LEFT JOIN features f
+  ON f.user_id = l.user_id
+ AND f.available_ts <= l.ts
+ AND f.available_ts >  l.ts - INTERVAL 30 DAY
+QUALIFY ROW_NUMBER() OVER (PARTITION BY l.user_id, l.ts ORDER BY f.available_ts DESC) = 1;
+```
+
+#### Typowe błędy i dobre praktyki
+
+- **Tabela cech bez historii** (tylko „stan bieżący”, nadpisywany każdej nocy) – nie da się z niej zbudować poprawnego zbioru treningowego. Cechy przechowuj jako historię (append-only, warstwa Bronze/Silver) z kolumną czasu.
+- **Agregaty liczone na całym zbiorze**, np. „średnia wartość zamówień klienta” policzona ze wszystkich lat – zawiera przyszłość. Okno agregacji musi kończyć się przed czasem zdarzenia (`rolling` z `closed="left"`).
+- **Strefy czasowe** – porównuj znaczniki czasu w jednej strefie (najlepiej UTC), inaczej przesunięcie o kilka godzin daje wyciek albo brak cech.
+- **Losowy podział train/test** przy danych czasowych – nawet przy poprawnym złączeniu test „miesza się” z treningiem. Dziel po czasie (trening: przeszłość, test: przyszłość).
+- **Test kontrolny** – w pipeline sprawdzaj asercją, że dla każdego wiersza `feature_ts ≤ event_ts`.
+
+Feature Store (np. Feast `get_historical_features`) wykonuje point-in-time join automatycznie na podstawie `timestamp_field` źródła i `ttl` widoku cech, dlatego ta sama definicja cechy daje spójne dane dla treningu (offline) i serwowania (online).
 
 ### Online vs offline store
 
