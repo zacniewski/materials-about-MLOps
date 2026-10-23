@@ -48,7 +48,7 @@ flowchart LR
     end
 
     subgraph Przechowywanie
-        DL[Data Lake\nsurow dane]
+        DL[Data Lake\nsurowe dane]
         DW[Data Warehouse\nprzetworzone]
         FS[Feature Store\ncechy ML]
     end
