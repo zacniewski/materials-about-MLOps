@@ -207,7 +207,7 @@ Model produkcyjny **wpływa na dane**, na których będzie trenowany w przyszło
 ```mermaid
 flowchart LR
     M[Model v1] -->|rekomendacje| U[Użytkownicy]
-    U -->|kliknięcia\n(tylko w to, co pokazano)| D[Nowe dane]
+    U -->|"kliknięcia\n(tylko w to, co pokazano)"| D[Nowe dane]
     D -->|retrening| M2[Model v2]
     M2 -.->|wzmacnia ten sam\nbias| U
 ```
