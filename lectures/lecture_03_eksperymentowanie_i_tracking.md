@@ -7,6 +7,19 @@ Po tym wykładzie student:
 - zna wzorce organizacji eksperymentów,
 - potrafi porównywać eksperymenty i wybierać najlepszy model.
 
+## Skrypty do wykładu
+
+Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_03/`. Pełną instrukcję znajdziesz w [`lectures/scripts/README.md`](scripts/README.md).
+
+| Kiedy (sekcja) | Skrypt | Cel demonstracji |
+|---|---|---|
+| 3. Podstawy MLflow Tracking | `01_mlflow_experiments.py` | logowanie parametrów, metryk, artefaktów i modeli |
+| 4. Porównywanie eksperymentów | `02_compare_runs.py` (po `01`) | `search_runs`, ładowanie modelu, Model Registry + alias |
+| 6. Optuna | `03_hyperparameter_tuning.py --trials 15` | HPO z zagnieżdżonymi runami |
+| 8 i 10. Reprodukowalność, pułapki | `04_reproducibility.py` | seed, commit git, hash danych, run FAILED |
+
+**Jak:** przed wykładem uruchom `rm -rf mlruns`, żeby zacząć od pustego trackingu. Następnie uruchamiaj skrypty z katalogu głównego repozytorium (`python lectures/scripts/lecture_03/<skrypt>`). W drugim terminalu uruchom `mlflow ui --port 5000` i po każdym skrypcie pokazuj wyniki w przeglądarce (http://localhost:5000). Domyślnie skrypty zapisują runy w `./mlruns`. Żeby użyć serwera, ustaw `MLFLOW_TRACKING_URI`.
+
 ---
 
 ## 1. Problem niekontrolowanych eksperymentów
@@ -185,6 +198,11 @@ print("\n=== Ranking eksperymentów ===")
 print(results_df[["name", "auc_roc", "f1_score", "cv_auc_mean"]].to_string(index=False))
 ```
 
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_03/01_mlflow_experiments.py`  
+> **Kiedy:** po omówieniu kodu z sekcji 3. Trwa około 40 s, więc w tym czasie możesz omówić kluczowe pojęcia.  
+> **Co pokazać:** w MLflow UI zaznacz 5 runów i kliknij **Compare** (wykres parallel coordinates). Otwórz run GBM i pokaż metrykę krokową `staged_roc_auc`, artefakty `evaluation/confusion_matrix.png` oraz model z sygnaturą i `input_example`.
+
 ---
 
 ## 4. Porównywanie eksperymentów
@@ -221,6 +239,11 @@ print(f"Najlepszy model: {best_run_id}")
 # Załaduj najlepszy model
 best_model = mlflow.sklearn.load_model(f"runs:/{best_run_id}/model")
 ```
+
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_03/02_compare_runs.py`  
+> **Kiedy:** bezpośrednio po kodzie z sekcji 4.  
+> **Co pokazać:** ranking runów w terminalu, filtr `tags.model_type = ... and metrics.roc_auc > 0.9` (ta sama składnia działa w polu wyszukiwania UI) oraz zakładkę **Models** w UI z modelem `churn-classifier` i aliasem `champion`.
 
 ---
 
@@ -338,6 +361,11 @@ fig = vis.plot_optimization_history(study)
 fig.write_html("/tmp/optimization_history.html")
 mlflow.log_artifact("/tmp/optimization_history.html")
 ```
+
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_03/03_hyperparameter_tuning.py --trials 15`  
+> **Kiedy:** po omówieniu integracji Optuna + MLflow.  
+> **Co pokazać:** w eksperymencie `churn-hpo` rozwiń run-rodzica z próbami jako runami zagnieżdżonymi, a następnie użyj **Compare → Parallel Coordinates**. Bez zainstalowanej Optuny skrypt użyje random search. Warto zestawić oba podejścia.
 
 ---
 
@@ -476,6 +504,11 @@ with mlflow.start_run():
     log_environment_info()
     # ... reszta eksperymentu
 ```
+
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_03/04_reproducibility.py`  
+> **Kiedy:** po sekcji 8. Uzupełnia też sekcję 10 (logowanie nieudanych eksperymentów).  
+> **Co pokazać:** dwa runy z `seed=42` dają identyczne `roc_auc`. Pokaż w UI tagi `git_commit`, `data_hash` i wersje bibliotek oraz run `failing-run` ze statusem FAILED.
 
 ---
 

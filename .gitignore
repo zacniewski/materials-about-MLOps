@@ -208,3 +208,8 @@ __marimo__/
 
 # Misc
 syllabus/
+
+# Wyniki skryptów demonstracyjnych z wykładów
+lectures/scripts/**/outputs/
+mlruns/
+mlartifacts/

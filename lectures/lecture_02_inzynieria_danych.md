@@ -7,6 +7,20 @@ Po tym wykładzie student:
 - potrafi zaprojektować pipeline przetwarzania danych,
 - rozumie koncepcję Feature Store i jego znaczenie.
 
+## Skrypty do wykładu
+
+Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_02/`. Pełną instrukcję znajdziesz w [`lectures/scripts/README.md`](scripts/README.md).
+
+| Kiedy (sekcja) | Skrypt | Cel demonstracji |
+|---|---|---|
+| 3. Formaty danych | `01_csv_vs_parquet.py` | rozmiar, szybkość, column pruning i typy danych |
+| 5. Pipeline przetwarzania | `02_data_pipeline.py` | kompletny pipeline pandas + sklearn zapisany jako jeden artefakt |
+| 6. Walidacja danych | `03_data_validation.py [--corrupt]` | walidacja jako bramka jakości (kod wyjścia 1 przy błędach) |
+| 8. DVC | `05_dvc_demo.sh` | wersjonowanie danych i powrót do poprzedniej wersji |
+| 10. Pułapki | `04_data_leakage.py` | data leakage daje złudnie wysokie wyniki |
+
+**Jak:** z katalogu głównego repozytorium uruchom `python lectures/scripts/lecture_02/<skrypt>`. Skrypt DVC uruchamia się przez `bash` i wymaga `git` oraz `dvc`. Działa w katalogu tymczasowym, więc nie zmienia repozytorium.
+
 ---
 
 ## 1. Dane jako fundament ML
@@ -124,6 +138,11 @@ t0 = time.time()
 df_partial = pd.read_parquet('/tmp/data.parquet', columns=['user_id', 'churn'])
 print(f"\nOdczyt 2 kolumn z Parquet: {time.time()-t0:.3f}s")
 ```
+
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_02/01_csv_vs_parquet.py --rows 1000000`  
+> **Kiedy:** po omówieniu tabeli porównawczej formatów.  
+> **Co pokazać:** Parquet jest kilkukrotnie mniejszy, odczyt dwóch kolumn jest wielokrotnie szybszy, a CSV gubi typy `datetime` i `category`.
 
 ---
 
@@ -282,6 +301,11 @@ def run_data_pipeline(input_path: str) -> tuple:
     return X_train_processed, X_test_processed, y_train, y_test, preprocessor
 ```
 
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_02/02_data_pipeline.py`  
+> **Kiedy:** po omówieniu kodu z sekcji 5.  
+> **Co pokazać:** log czyszczenia (duplikaty, błędne dochody), raport klasyfikacji i predykcja z zapisanego pipeline'u. Podkreśl, że imputacja i skalowanie są dopasowywane tylko na zbiorze treningowym.
+
 ---
 
 ## 6. Walidacja danych – Great Expectations
@@ -337,6 +361,11 @@ flowchart TD
     D -->|Naruszenie reguł| E3[Alert:\nReguły biznesowe]
     D -->|OK| F[Dane zatwierdzone\ndo treningu]
 ```
+
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_02/03_data_validation.py && python lectures/scripts/lecture_02/03_data_validation.py --corrupt; echo $?`  
+> **Kiedy:** po przykładzie Great Expectations.  
+> **Co pokazać:** te same oczekiwania (w tym parametr `mostly`) zaimplementowane w czystym pandas. Na danych z błędami walidacja nie przechodzi, a skrypt zwraca kod 1, co w CI/CD zatrzymuje pipeline.
 
 ---
 
@@ -511,6 +540,11 @@ train:
 test_size: 0.2
 ```
 
+
+> **▶️ Demo na żywo:** `bash lectures/scripts/lecture_02/05_dvc_demo.sh`  
+> **Kiedy:** po omówieniu poleceń DVC i pliku `.dvc`.  
+> **Co pokazać:** zawartość pliku `train.csv.dvc` (hash md5), zmianę liczby wierszy z 5000 na 1000 po `git checkout data-v1 && dvc checkout` oraz historię commitów.
+
 ---
 
 ## 9. Streaming vs Batch Processing
@@ -607,6 +641,11 @@ X_test_scaled = scaler.transform(X_test)         # transform na test
 
 > ⚠️ **Pułapka 3: Ignorowanie brakujących wartości**
 > Model wytrenowany na danych bez braków może się zachowywać nieprzewidywalnie, gdy w produkcji pojawią się wartości null. Zawsze testuj model z brakującymi danymi.
+
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_02/04_data_leakage.py`  
+> **Kiedy:** przy omawianiu pułapki „normalizacja przed podziałem”.  
+> **Co pokazać:** na czystym szumie selekcja cech przed CV daje accuracy ~0.85, a poprawny `Pipeline` daje ~0.5. Cecha „z przyszłości” podnosi wynik z ~0.65 do ~0.95.
 
 ### Case Study: Zillow — katastrofa danych
 

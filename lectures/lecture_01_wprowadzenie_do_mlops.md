@@ -7,6 +7,18 @@ Po tym wykładzie student:
 - potrafi opisać różnice między tradycyjnym DevOps a MLOps,
 - zna główne wyzwania wdrażania modeli ML.
 
+## Skrypty do wykładu
+
+Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_01/`. Pełną instrukcję znajdziesz w [`lectures/scripts/README.md`](scripts/README.md).
+
+| Kiedy (sekcja) | Skrypt | Cel demonstracji |
+|---|---|---|
+| 4.1 Reprodukowalność | `01_reproducibility.py` | brak seeda daje różne wyniki, a z seedem wyniki są identyczne |
+| 4.2–4.3 Data/Concept drift | `02_data_drift.py --plot` | test KS wykrywa data drift, ale concept drift wykryje dopiero monitoring metryk |
+| 8. Prosty system MLOps | `03_simple_mlops_system.py` | rejestr modeli z automatyczną promocją lepszego modelu |
+
+**Jak:** z katalogu głównego repozytorium, po `pip install -r requirements.txt`, uruchom `python lectures/scripts/lecture_01/<skrypt>`. Wyniki zapisują się w `lectures/scripts/lecture_01/outputs/`.
+
 ---
 
 ## 1. Czym jest MLOps?
@@ -193,6 +205,11 @@ experiment_config = {
 }
 ```
 
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_01/01_reproducibility.py`  
+> **Kiedy:** na koniec sekcji 4.1, przed przejściem do dryftu.  
+> **Co pokazać:** trzy różne accuracy bez seeda, trzy identyczne z `seed=42` i zapisany plik `experiment_config.json`.
+
 ### 4.2 Data Drift
 
 **Data drift** – rozkład danych wejściowych zmienia się w czasie.
@@ -249,6 +266,11 @@ graph LR
         A2[Cechy X] -->|nowa relacja| B2[Etykieta Y']
     end
 ```
+
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_01/02_data_drift.py --plot`  
+> **Kiedy:** po omówieniu sekcji 4.2 i 4.3.  
+> **Co pokazać:** mały dryft (0.1) nie jest istotny statystycznie, a duży jest. W części concept drift test KS nic nie wykrywa, mimo że accuracy spada z ~1.0 do ~0.5. Wykres histogramów zapisuje się w `outputs/data_drift.png`. Ćwiczenie: zmień parametry rozkładu i zapytaj studentów, od jakiego przesunięcia test zaczyna wykrywać dryft.
 
 ---
 
@@ -432,6 +454,11 @@ prod = registry.get_production_model("churn_predictor")
 print(f"\nAktualny model produkcyjny: {prod.name} v{prod.version}")
 print(f"Metryki: {prod.metrics}")
 ```
+
+
+> **▶️ Demo na żywo:** `python lectures/scripts/lecture_01/03_simple_mlops_system.py`  
+> **Kiedy:** po przykładzie z sekcji 8, jako jego rozbudowana, działająca wersja.  
+> **Co pokazać:** modele v1 i v2 trafiają na produkcję, a słabszy v3 zostaje w `staging` (bramka jakości). Następnie pokaż plik `outputs/model_registry/registry.json` i zapowiedz, że w wykładzie 3 tę samą rolę pełni MLflow Model Registry.
 
 ---
 
