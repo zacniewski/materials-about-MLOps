@@ -5,6 +5,8 @@
 - **Poziom:** Zaawansowany
 - **Wymagania wstępne:** Lab 1–5 ukończone, podstawy Docker
 
+> 🖥️ **Środowisko:** laboratorium jest przygotowane pod maszynę wirtualną Ubuntu 24.04 (Python 3.12, Docker Engine) — instrukcja jej przygotowania: [00_przygotowanie_maszyny_wirtualnej.md](00_przygotowanie_maszyny_wirtualnej.md). Komendy uruchamiaj w aktywnym `venv` z zależnościami z `requirements.txt` repozytorium.
+
 ## Cele laboratorium
 Po tym laboratorium student:
 - zbuduje kompletny ML Pipeline z użyciem KFP SDK v2,
@@ -14,16 +16,79 @@ Po tym laboratorium student:
 
 ---
 
+## Część 0: Teoria w pigułce (10 min)
+
+**Kubeflow Pipelines (KFP)** to orkiestrator workflow ML działający na Kubernetes. Pipeline to graf skierowany (DAG) **komponentów** — każdy komponent to funkcja Python uruchamiana w **osobnym kontenerze** (`base_image` + `packages_to_install`). Komponenty komunikują się przez:
+
+- **parametry** (`str`, `int`, `float`, `bool`, `dict`, `list`) — małe wartości przekazywane bezpośrednio,
+- **artefakty** (`Input[Dataset]`, `Output[Model]`, `Output[Metrics]` …) — pliki zapisywane w magazynie obiektów (MinIO/S3/GCS), do których komponent dostaje ścieżkę `.path`.
+
+Kod Python jest **kompilowany do YAML** (IR – *Intermediate Representation*), który można wersjonować i uruchomić na dowolnej instalacji KFP.
+
+```mermaid
+flowchart LR
+    A[ingest_data] -->|Dataset| B[validate_data]
+    A -->|Dataset| C[preprocess_data]
+    B -.->|after| C
+    C -->|train Dataset| D[train_model]
+    C -->|test Dataset| E[evaluate_model]
+    D -->|Model| E
+    E -->|"'deploy'?"| F{dsl.If}
+    F -->|tak| G[deploy_model]
+```
+
+Trzy sposoby uruchomienia pipeline'u w tym laboratorium (od najlżejszego):
+
+| Tryb | Wymagania | Kiedy używać |
+|------|-----------|--------------|
+| Tylko kompilacja do YAML | `pip install kfp` | Zawsze — weryfikuje poprawność definicji |
+| `kfp.local` (`SubprocessRunner` / `DockerRunner`) | Python / Docker | Szybkie testy bez Kubernetesa, mało RAM |
+| KFP standalone na **kind** | Docker, ~6 GB RAM wolne, 4 vCPU | Pełne UI, historia uruchomień, artefakty |
+
+---
+
 ## Część 1: Instalacja i konfiguracja KFP (20 min)
 
 ### Krok 1.1: Instalacja KFP SDK
 
+KFP SDK jest już w `requirements.txt` repozytorium (`kfp>=2.9,<3.0`). Lokalny runner (`kfp.local`) jest częścią SDK — **nie instaluj** osobnego pakietu `kfp-local` (nie istnieje).
+
 ```bash
-pip install kfp==2.7.0 kfp-local==0.1.0
+pip install -r requirements.txt   # lub: pip install "kfp>=2.9,<3.0"
 
 # Sprawdź instalację
 python -c "import kfp; print(f'KFP version: {kfp.__version__}')"
+python -c "from kfp import local; print('kfp.local OK')"
 ```
+
+### Krok 1.1a (opcjonalnie): Klaster kind + KFP standalone w maszynie wirtualnej
+
+Potrzebne tylko, jeśli chcesz zobaczyć pipeline w UI. Wymaga ~6 GB wolnej pamięci RAM w VM — przy 8 GB zamknij inne programy (przeglądarkę z wieloma kartami, IDE). Jeśli zasobów brakuje, pozostań przy kompilacji + `kfp.local`.
+
+```bash
+# Instalacja kind i kubectl (Linux x86_64)
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+curl -LO "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+# Klaster jednowęzłowy
+kind create cluster --name kfp
+
+# KFP standalone (wersja backendu zgodna z SDK 2.x)
+export PIPELINE_VERSION=2.3.0
+kubectl apply -k "github.com/kubeflow/pipelines/manifests/kustomize/cluster-scoped-resources?ref=$PIPELINE_VERSION"
+kubectl wait --for condition=established --timeout=60s crd/applications.app.k8s.io
+kubectl apply -k "github.com/kubeflow/pipelines/manifests/kustomize/env/platform-agnostic?ref=$PIPELINE_VERSION"
+
+# Pierwsze uruchomienie pobiera obrazy – może potrwać 10–20 min
+kubectl get pods -n kubeflow -w
+
+# UI (zostaw w osobnym terminalu), potem http://localhost:8080
+kubectl port-forward -n kubeflow svc/ml-pipeline-ui 8080:80
+```
+
+Po zajęciach zwolnij zasoby: `kind delete cluster --name kfp`.
 
 ### Krok 1.2: Struktura projektu pipeline'u
 
@@ -39,8 +104,11 @@ mlops-project/
 │   │   ├── evaluate.py      # komponent ewaluacji
 │   │   └── deploy.py        # komponent wdrożenia
 │   ├── churn_pipeline.py    # definicja pipeline'u
-│   └── run_pipeline.py      # skrypt uruchamiający
+│   ├── run_pipeline.py      # uruchomienie lokalne (kfp.local)
+│   └── submit_pipeline.py   # wysłanie na klaster KFP (opcjonalnie)
 ```
+
+> ℹ️ Pliki uruchamiaj zawsze z katalogu głównego projektu (`mlops-project/`), np. `python pipeline/churn_pipeline.py` — skrypty dodają `.` do `sys.path`, aby działał import `pipeline.components...`.
 
 ```bash
 mkdir -p pipeline/components
@@ -64,8 +132,8 @@ from kfp.dsl import Dataset, Output
 
 
 @dsl.component(
-    base_image="python:3.11-slim",
-    packages_to_install=["pandas==2.2.0", "numpy==1.26.0", "pyarrow==15.0.0"]
+    base_image="python:3.12-slim",
+    packages_to_install=["pandas==2.2.3", "numpy==1.26.4", "pyarrow==17.0.0"]
 )
 def ingest_data(
     n_samples: int,
@@ -140,8 +208,8 @@ from kfp.dsl import Dataset, Input, Metrics, Output
 
 
 @dsl.component(
-    base_image="python:3.11-slim",
-    packages_to_install=["pandas==2.2.0", "pyarrow==15.0.0"]
+    base_image="python:3.12-slim",
+    packages_to_install=["pandas==2.2.3", "pyarrow==17.0.0"]
 )
 def validate_data(
     input_dataset: Input[Dataset],
@@ -214,10 +282,10 @@ from kfp.dsl import Dataset, Input, Output, Metrics
 
 
 @dsl.component(
-    base_image="python:3.11-slim",
+    base_image="python:3.12-slim",
     packages_to_install=[
-        "pandas==2.2.0", "scikit-learn==1.4.0",
-        "numpy==1.26.0", "pyarrow==15.0.0"
+        "pandas==2.2.3", "scikit-learn==1.5.2",
+        "numpy==1.26.4", "pyarrow==17.0.0"
     ]
 )
 def preprocess_data(
@@ -287,10 +355,10 @@ from kfp.dsl import Dataset, Input, Model, Output, Metrics
 
 
 @dsl.component(
-    base_image="python:3.11-slim",
+    base_image="python:3.12-slim",
     packages_to_install=[
-        "pandas==2.2.0", "scikit-learn==1.4.0",
-        "numpy==1.26.0", "pyarrow==15.0.0", "joblib==1.3.0"
+        "pandas==2.2.3", "scikit-learn==1.5.2",
+        "numpy==1.26.4", "pyarrow==17.0.0", "joblib==1.4.2"
     ]
 )
 def train_model(
@@ -389,10 +457,10 @@ from kfp.dsl import Dataset, Input, Model, Metrics, Output
 
 
 @dsl.component(
-    base_image="python:3.11-slim",
+    base_image="python:3.12-slim",
     packages_to_install=[
-        "pandas==2.2.0", "scikit-learn==1.4.0",
-        "numpy==1.26.0", "pyarrow==15.0.0", "joblib==1.3.0"
+        "pandas==2.2.3", "scikit-learn==1.5.2",
+        "numpy==1.26.4", "pyarrow==17.0.0", "joblib==1.4.2"
     ]
 )
 def evaluate_model(
@@ -468,6 +536,37 @@ def evaluate_model(
     return decision
 ```
 
+### Krok 2.6: Komponent wdrożenia
+
+Utwórz `pipeline/components/deploy.py`:
+
+```python
+# pipeline/components/deploy.py
+"""Komponent KFP: (symulowane) wdrożenie modelu."""
+
+from kfp import dsl
+from kfp.dsl import Input, Model
+
+
+@dsl.component(
+    base_image="python:3.12-slim",
+    # scikit-learn jest potrzebny, bo joblib odtwarza obiekt sklearn.Pipeline
+    packages_to_install=["scikit-learn==1.5.2", "joblib==1.4.2"]
+)
+def deploy_model(input_model: Input[Model]) -> str:
+    """Wczytuje model i symuluje wdrożenie."""
+    import joblib
+
+    model_data = joblib.load(input_model.path)
+    print("🚀 Wdrażanie modelu...")
+    print(f"   Cechy: {model_data['feature_cols']}")
+    print(f"   Parametry: {model_data['params']}")
+    # W produkcji: wdrożenie np. na KServe / Vertex AI Endpoint
+    return "deployed"
+```
+
+> ⚠️ Komponent, który ma jednocześnie artefakt wyjściowy (`Output[Metrics]`) **i** wartość zwracaną (`-> str`), ma kilka wyjść. Wartość zwracana jest dostępna jako `task.outputs["Output"]` — `task.output` zadziała tylko dla komponentów z jednym wyjściem.
+
 ---
 
 ## Część 3: Definicja i uruchomienie pipeline'u (40 min)
@@ -481,7 +580,6 @@ Utwórz `pipeline/churn_pipeline.py`:
 """Definicja kompletnego pipeline'u ML dla predykcji churnu."""
 
 from kfp import dsl, compiler
-from kfp.dsl import If
 
 # Import komponentów
 import sys
@@ -492,6 +590,7 @@ from pipeline.components.validate import validate_data
 from pipeline.components.preprocess import preprocess_data
 from pipeline.components.train import train_model
 from pipeline.components.evaluate import evaluate_model
+from pipeline.components.deploy import deploy_model
 
 
 @dsl.pipeline(
@@ -560,20 +659,9 @@ def churn_pipeline(
     evaluate_task.set_display_name("5. Ewaluuj model")
 
     # ── Krok 6: Warunkowe wdrożenie ──────────────────────────────────────────
-    with dsl.If(evaluate_task.output == "deploy", name="Czy wdrożyć?"):
-        # Komponent wdrożenia (uproszczony)
-        @dsl.component(base_image="python:3.11-slim",
-                       packages_to_install=["joblib==1.3.0"])
-        def deploy_model_component(input_model: dsl.Input[dsl.Model]) -> str:
-            import joblib
-            model_data = joblib.load(input_model.path)
-            print(f"🚀 Wdrażanie modelu...")
-            print(f"   Cechy: {model_data['feature_cols']}")
-            print(f"   Parametry: {model_data['params']}")
-            # W produkcji: wdrożenie na Vertex AI Endpoint
-            return "deployed"
-
-        deploy_task = deploy_model_component(
+    # evaluate_model ma dwa wyjścia (Metrics + return) → wartość zwracana to "Output"
+    with dsl.If(evaluate_task.outputs["Output"] == "deploy", name="Czy wdrożyć?"):
+        deploy_task = deploy_model(
             input_model=train_task.outputs["output_model"]
         )
         deploy_task.set_display_name("6. Wdróż model")
@@ -599,11 +687,18 @@ if __name__ == "__main__":
 import sys
 sys.path.insert(0, '.')
 
-from kfp.local import init, SubprocessRunner
+from kfp import local
 from pipeline.churn_pipeline import churn_pipeline
 
-# Inicjalizacja lokalnego runnera
-init(runner=SubprocessRunner())
+# Inicjalizacja lokalnego runnera:
+# - SubprocessRunner(use_venv=True) – każdy komponent w osobnym venv
+#   (pakiety z packages_to_install NIE nadpiszą Twojego środowiska),
+# - local.DockerRunner() – każdy komponent w kontenerze base_image
+#   (najwierniejsze odwzorowanie klastra, wymaga Dockera).
+local.init(
+    runner=local.SubprocessRunner(use_venv=True),
+    pipeline_root="./local_outputs",   # tu trafią artefakty
+)
 
 # Uruchomienie pipeline'u
 print("Uruchamianie pipeline'u lokalnie...")
@@ -621,6 +716,27 @@ pipeline_run = churn_pipeline(
 
 print("\n" + "=" * 60)
 print("Pipeline zakończony!")
+print(f"Status: {pipeline_run.state}")
+```
+
+Opcjonalnie – wysłanie skompilowanego pipeline'u na klaster KFP (wymaga Kroku 1.1a i działającego `port-forward`):
+
+```python
+# pipeline/submit_pipeline.py
+"""Wysyła pipeline na klaster KFP (np. kind + port-forward)."""
+
+import kfp
+
+# Przy `kubectl port-forward -n kubeflow svc/ml-pipeline-ui 8080:80`
+client = kfp.Client(host="http://localhost:8080")
+
+run = client.create_run_from_pipeline_package(
+    "pipeline/churn_pipeline.yaml",
+    arguments={"n_samples": 5000, "n_estimators": 50, "min_auc_threshold": 0.70},
+    experiment_name="churn-lab06",
+    enable_caching=True,
+)
+print(f"Run ID: {run.run_id} – sprawdź w UI: http://localhost:8080")
 ```
 
 ```bash
@@ -630,9 +746,15 @@ python pipeline/churn_pipeline.py
 # Sprawdź wygenerowany YAML
 head -50 pipeline/churn_pipeline.yaml
 
-# Uruchom pipeline lokalnie
+# Uruchom pipeline lokalnie (pierwsze uruchomienie instaluje pakiety
+# w venv-ach komponentów – kilka minut; potrzebny dostęp do internetu)
 python pipeline/run_pipeline.py
+
+# Artefakty (parquet, model, metryki) znajdziesz w:
+ls -R local_outputs | head -30
 ```
+
+> ℹ️ `kfp.local` obsługuje uruchamianie całych pipeline'ów (w tym `dsl.If`) od KFP SDK 2.8+. Nie wszystkie funkcje klastra są dostępne lokalnie — np. `set_cpu_request()` / `set_memory_request()` są ignorowane, a `dsl.ParallelFor` i `dsl.ExitHandler` mogą nie być wspierane. W razie błędu `NotImplementedError` ogranicz się do kompilacji YAML lub użyj klastra kind.
 
 ### Krok 3.3: Testy komponentów
 
@@ -796,6 +918,14 @@ pytest tests/ -v --tb=short
 | Komponent nie widzi pliku wejściowego | Zła ścieżka do artefaktu | Używaj `input_artifact.path` zamiast hardkodowanych ścieżek |
 | Pipeline działa lokalnie, ale nie na K8s | Brak obrazu Docker w rejestrze | Zbuduj i wypchnij obraz bazowy do Container Registry |
 | Caching nie działa | Zmienione dane wejściowe lub parametry | Sprawdź, czy `enable_caching=True` jest ustawione i czy wejścia się nie zmieniły |
+| `AttributeError: The task has multiple outputs` | Użycie `task.output` przy komponencie z `Output[Metrics]` i `return` | Użyj `task.outputs["Output"]` |
+| `ERROR: No matching distribution found for kfp-local` | Pakiet nie istnieje | `kfp.local` jest częścią `kfp>=2.5`; zainstaluj tylko `kfp` |
+| Lokalny run zmienił wersje pandas/numpy w venv | `SubprocessRunner()` bez `use_venv=True` instaluje `packages_to_install` w bieżącym środowisku | Użyj `SubprocessRunner(use_venv=True)` lub `DockerRunner()` |
+| `ModuleNotFoundError: sklearn` w kroku deploy | `joblib.load` odtwarza obiekt `sklearn.Pipeline` | Dodaj `scikit-learn` do `packages_to_install` komponentu, który wczytuje model |
+| Pody KFP w kind wiszą w `Pending`/`CrashLoopBackOff` | Za mało RAM/CPU w VM | Daj VM ≥ 8 GB RAM i 4 vCPU, zamknij inne aplikacje; sprawdź `kubectl describe pod -n kubeflow <pod>`; w ostateczności zostań przy `kfp.local` |
+| `kind create cluster` → błąd uprawnień Dockera | Użytkownik nie należy do grupy `docker` | `sudo usermod -aG docker $USER`, potem wyloguj się i zaloguj ponownie |
+| UI KFP niedostępne pod `localhost:8080` | Brak lub przerwany `port-forward` | Uruchom ponownie `kubectl port-forward -n kubeflow svc/ml-pipeline-ui 8080:80` (zostaw terminal otwarty) |
+| `kfp.Client` → `Connection refused` | Jw. albo zły `host` | Użyj `kfp.Client(host="http://localhost:8080")` przy działającym port-forward |
 
 > 💡 **Wskazówka:** Rozdzielaj logikę biznesową od kodu KFP — pisz funkcje Python, które można testować niezależnie, a komponenty KFP niech będą tylko „opakowaniem" wywołującym te funkcje.
 

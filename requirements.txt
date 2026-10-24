@@ -4,6 +4,7 @@ scikit-learn>=1.5,<2.0
 matplotlib>=3.9,<4.0
 
 mlflow>=2.15,<3.0
+sqlalchemy<2.1               # SQLAlchemy 2.1 psuje mlflow 2.x (ImportError w mlflow server)
 dvc>=3.55,<4.0
 
 fastapi>=0.115,<1.0

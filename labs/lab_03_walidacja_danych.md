@@ -1,5 +1,7 @@
 # Laboratorium 3: Walidacja Danych i Feature Store
 
+> ℹ️ **Środowisko:** laboratorium zakłada maszynę wirtualną Ubuntu 24.04 (VirtualBox) z Pythonem 3.12 i aktywnym środowiskiem `venv` z zależnościami z `requirements.txt` (m.in. `pandas`, `pyarrow`, `scipy`, `pytest`, `great-expectations` 1.x). Jeśli jeszcze go nie masz, zacznij od [Przygotowania maszyny wirtualnej](00_przygotowanie_maszyny_wirtualnej.md). Wszystkie polecenia uruchamiaj z **katalogu głównego projektu** z Lab 1 (tam, gdzie leżą `src/`, `data/` i `dvc.yaml`).
+
 ## Informacje ogólne
 - **Czas:** 2 godziny
 - **Poziom:** Średni
@@ -11,6 +13,50 @@ Po tym laboratorium student:
 - zbuduje prosty Feature Store oparty na plikach Parquet,
 - wykryje anomalie w danych wejściowych,
 - zintegruje walidację danych z pipeline'em DVC.
+
+---
+
+## Wprowadzenie teoretyczne
+
+### Dlaczego walidacja danych?
+
+W klasycznym oprogramowaniu błędy siedzą głównie w kodzie. W systemach ML równie często źródłem awarii są **dane**: zmieniony schemat w systemie źródłowym, nowa jednostka (zł → tys. zł), brakujące wartości po awarii ETL, duplikaty. Model nie zgłosi wyjątku — po prostu zacznie zwracać gorsze predykcje (*silent failure*). Zasada **„garbage in, garbage out”** sprawia, że walidacja danych jest pierwszą bramką jakości w pipeline'ie.
+
+### Poziomy walidacji
+
+| Poziom | Co sprawdzamy | Przykład w tym labie |
+|--------|---------------|---------------------|
+| **Schemat** | Obecność kolumn, typy danych | `required_columns` |
+| **Kompletność i unikalność** | Braki (`null`), duplikaty kluczy | `no_missing_values`, `no_duplicate_customers` |
+| **Zakresy / dziedzina** | Wartości dozwolone dla pojedynczej kolumny | `age_range`, `churn_binary` |
+| **Statystyki zbioru** | Rozkład, średnia, odsetek klasy | `churn_rate_reasonable`, `min_sample_size` |
+| **Anomalie / dryf** | Pojedyncze rekordy lub całe partie odstające od danych referencyjnych | `StatisticalAnomalyDetector` (Część 2), Lab 5 |
+
+**Błąd (`error`)** zatrzymuje pipeline (dane nie nadają się do użytku), **ostrzeżenie (`warning`)** jest raportowane, ale pozwala kontynuować — to kompromis między bezpieczeństwem a liczbą fałszywych alarmów.
+
+### Miejsce walidacji w pipeline'ie
+
+```mermaid
+flowchart LR
+    A[data/raw] --> B[preprocess]
+    B --> C[data/processed/train.parquet]
+    C --> V{validate<br/>reguły + anomalie}
+    V -- PASS --> T[train] --> M[models/churn_model.pkl]
+    V -- FAIL --> X[❌ stop pipeline<br/>raport JSON]
+    C --> FS[(Feature Store<br/>Parquet + registry.json)]
+    FS --> T
+    FS --> S[serwowanie online<br/>Lab 4]
+```
+
+### Feature Store w pigułce
+
+Feature Store to centralne repozytorium **zdefiniowanych, wersjonowanych cech**, z którego korzystają zarówno trening (*offline store* — duże, historyczne tabele), jak i serwowanie (*online store* — szybki odczyt po kluczu encji). Dzięki temu ta sama definicja cechy (np. `income_per_age`) jest używana w obu miejscach, co eliminuje **training-serving skew**. W produkcji używa się narzędzi typu Feast, Tecton, Hopsworks; w labie budujemy minimalny odpowiednik na plikach Parquet, aby zrozumieć idee: rejestr, grupy cech, klucz encji, wersje.
+
+### Typowe pułapki
+- **Progi „z sufitu”** — zakresy powinny wynikać z wiedzy domenowej lub statystyk danych referencyjnych, a nie być dobierane tak, żeby test „przechodził”.
+- **Walidacja tylko danych treningowych** — te same reguły należy stosować do danych przychodzących w produkcji.
+- **Liczenie statystyk referencyjnych na danych testowych** (wyciek informacji) — `fit()` detektora robimy wyłącznie na zbiorze treningowym.
+- **Metody statystyczne nie zastąpią reguł domenowych** — IQR/Z-score mogą nie wykryć wartości niemożliwej biznesowo (np. ujemnego dochodu), jeśli leży ona blisko środka rozkładu (zobacz uwagę w Części 2).
 
 ---
 
@@ -329,6 +375,8 @@ class TestDataValidator:
         assert report.passed
 ```
 
+> 💡 Dane `data/processed/train.parquet` powstają w Lab 1 (`dvc repro` lub `python src/data/preprocess.py`). Jeśli pliku brakuje, najpierw odtwórz pipeline z Lab 1.
+
 ```bash
 # Uruchom testy walidacji
 pytest tests/data/test_validation.py -v
@@ -496,6 +544,21 @@ if __name__ == "__main__":
     clean_df = detector.get_clean_data(prod_df)
     print(f"\nDane po czyszczeniu: {len(clean_df)} wierszy (było {len(prod_df)})")
 ```
+
+```bash
+python src/data/anomaly_detection.py
+```
+
+> ⚠️ **Ważna obserwacja:** sztuczne anomalie `age = 999` zostaną wykryte obiema metodami, ale `income = -1000` najpewniej **nie** — przy prawoskośnym rozkładzie dochodu dolna granica IQR (`Q1 − 3·IQR`) jest ujemna, a wartość −1000 leży mniej niż 3,5 odchylenia standardowego od średniej. Większość raportowanych anomalii `income` i `balance` to naturalnie wysokie wartości z „ogona” rozkładu. Wniosek: detekcja statystyczna **uzupełnia**, a nie zastępuje reguły domenowe z Części 1 (`income_positive` wyłapie ten przypadek natychmiast). Sprawdź to: uruchom `build_churn_validator().validate(prod_df)`.
+
+### Teoria: Z-score vs IQR
+
+| Metoda | Wzór | Zalety | Wady |
+|--------|------|--------|------|
+| **Z-score** | `abs(x − μ) / σ > k` (zwykle k = 3) | Prosta, szybka | Zakłada rozkład zbliżony do normalnego; μ i σ same są wrażliwe na wartości odstające |
+| **IQR** | `x < Q1 − k·IQR` lub `x > Q3 + k·IQR` (k = 1,5 lub 3) | Odporna (oparta na kwantylach), działa dla skośnych rozkładów | Przy silnej skośności flaguje wiele „prawdziwych” dużych wartości |
+
+Dla rozkładów silnie skośnych (dochody, salda) często lepiej stosować metody na `log1p(x)` lub wielowymiarowe detektory (np. `IsolationForest` ze scikit-learn).
 
 ---
 
@@ -710,6 +773,16 @@ if __name__ == "__main__":
     print(features)
 ```
 
+```bash
+python src/features/feature_store.py
+
+# Podejrzyj rejestr i strukturę katalogów
+cat feature_store/registry.json | head -30
+find feature_store -name "*.parquet"
+```
+
+> 💡 Każde uruchomienie skryptu tworzy **nową wersję** (`vRRRRMMDD_HHMMSS`), ale `register_feature_group()` nadpisuje wpis w rejestrze i „gubi” listę poprzednich wersji (pliki Parquet zostają na dysku). To dobry punkt wyjścia do zadania 4. Katalog `feature_store/` dodaj do `.gitignore` (lub wersjonuj przez DVC) — nie commituj plików Parquet do Gita.
+
 ---
 
 ## Część 4: Integracja z pipeline DVC (20 min)
@@ -775,7 +848,7 @@ if __name__ == "__main__":
     main()
 ```
 
-Dodaj krok walidacji do `dvc.yaml`:
+Dodaj krok walidacji do `dvc.yaml` (wcięcie na poziomie pozostałych etapów w sekcji `stages:`):
 
 ```yaml
 # Dodaj do dvc.yaml po etapie preprocess:
@@ -790,9 +863,14 @@ Dodaj krok walidacji do `dvc.yaml`:
           cache: false
 ```
 
+> 💡 DVC wyznacza kolejność etapów na podstawie zależności. Aby `train` faktycznie czekał na pozytywną walidację, dodaj `reports/metrics/validation_report.json` do `deps` etapu `train`. Jeśli `validate_data.py` zakończy się kodem `1`, `dvc repro` przerwie pipeline.
+
 ```bash
 # Uruchom pipeline z walidacją
 dvc repro
+
+# Podgląd grafu zależności
+dvc dag
 
 # Sprawdź raport walidacji
 cat reports/metrics/validation_report.json
@@ -800,6 +878,60 @@ cat reports/metrics/validation_report.json
 # Uruchom testy
 pytest tests/data/ -v --tb=short
 ```
+
+### Krok 4.2 (opcjonalnie): Te same reguły w Great Expectations 1.x
+
+Własny framework z Części 1 dobrze pokazuje zasadę działania. W praktyce często używa się gotowych bibliotek — najpopularniejsza to **Great Expectations (GX)**, która jest już w `requirements.txt` (`great-expectations>=1.0`).
+
+> ⚠️ GX 1.x ma **zupełnie inne API** niż wersje 0.x. Wiele tutoriali w internecie używa usuniętych już konstrukcji, np. `ge.from_pandas(df)`, `df.expect_column_values_to_be_between(...)`, `context.sources.pandas_default.read_dataframe(...)` czy `great_expectations init`. Poniższy przykład używa API 1.x (Data Source → Data Asset → Batch Definition → Expectation Suite → Validation Definition).
+
+Utwórz `scripts/validate_gx.py`:
+
+```python
+# scripts/validate_gx.py
+"""Walidacja danych z Great Expectations 1.x."""
+
+import sys
+import pandas as pd
+import great_expectations as gx
+
+df = pd.read_parquet("data/processed/train.parquet")
+
+# Kontekst efemeryczny – nic nie zapisuje na dysk (wystarczy na laboratorium)
+context = gx.get_context(mode="ephemeral")
+
+data_source = context.data_sources.add_pandas("churn_source")
+data_asset = data_source.add_dataframe_asset(name="train")
+batch_definition = data_asset.add_batch_definition_whole_dataframe("train_batch")
+
+suite = context.suites.add(gx.ExpectationSuite(name="churn_suite"))
+suite.add_expectation(gx.expectations.ExpectColumnValuesToNotBeNull(column="customer_id"))
+suite.add_expectation(gx.expectations.ExpectColumnValuesToBeUnique(column="customer_id"))
+suite.add_expectation(gx.expectations.ExpectColumnValuesToBeBetween(column="age", min_value=18, max_value=100))
+suite.add_expectation(gx.expectations.ExpectColumnValuesToBeBetween(column="income", min_value=0))
+suite.add_expectation(gx.expectations.ExpectColumnValuesToBeInSet(column="churn", value_set=[0, 1]))
+suite.add_expectation(gx.expectations.ExpectColumnMeanToBeBetween(column="churn", min_value=0.01, max_value=0.60))
+
+validation_definition = context.validation_definitions.add(
+    gx.ValidationDefinition(name="churn_validation", data=batch_definition, suite=suite)
+)
+
+result = validation_definition.run(batch_parameters={"dataframe": df})
+
+for r in result.results:
+    status = "✅" if r.success else "❌"
+    print(f"{status} {r.expectation_config.type} {r.expectation_config.kwargs.get('column', '')}")
+
+print(f"\nWynik: {'PASS' if result.success else 'FAIL'}")
+sys.exit(0 if result.success else 1)
+```
+
+```bash
+# GX_ANALYTICS_ENABLED=false wyłącza wysyłanie anonimowej telemetrii
+GX_ANALYTICS_ENABLED=false python scripts/validate_gx.py
+```
+
+Porównaj wynik z `scripts/validate_data.py`. Zastanów się: co zyskujemy dzięki bibliotece (gotowe oczekiwania, raporty HTML „Data Docs”, integracje z Airflow/Spark/SQL), a co tracimy (złożoność, duże zależności, częste zmiany API)?
 
 ---
 
@@ -811,6 +943,13 @@ pytest tests/data/ -v --tb=short
 | Zbyt wiele false positive w anomaliach | Zbyt niski próg Z-score (np. 2.0) | Zwiększ próg do 3.0-4.0 lub użyj IQR z mnożnikiem 3.0 |
 | Feature Store zwraca stare cechy | Brak aktualizacji po zmianie danych | Dodaj timestamp do cech i sprawdzaj aktualność |
 | `dvc repro` nie uruchamia walidacji | Brak zależności w `dvc.yaml` | Upewnij się, że `validate` zależy od `data/processed/train.parquet` |
+| `ModuleNotFoundError: No module named 'src'` | Skrypt/pytest uruchomiony spoza katalogu głównego projektu | Uruchamiaj polecenia z katalogu głównego (tam, gdzie jest `src/`) |
+| `FileNotFoundError: data/processed/train.parquet` | Nie odtworzono pipeline'u z Lab 1 | `dvc repro` (lub `dvc pull`, jeśli dane są w zdalnym storage) |
+| `ImportError: Unable to find a usable engine ... pyarrow` | Brak `pyarrow` w aktywnym środowisku | Aktywuj właściwe `venv` (`source .venv/bin/activate`) i `pip install -r requirements.txt` |
+| `pip install` kończy się `externally-managed-environment` | Instalacja do systemowego Pythona Ubuntu 24.04 (PEP 668) | Zawsze instaluj pakiety w aktywnym `venv`, nie używaj `sudo pip` |
+| `AttributeError: module 'great_expectations' has no attribute 'from_pandas'` | Kod z tutoriala dla GX 0.x | Użyj API 1.x z Kroku 4.2 |
+| Anomalia (np. ujemny dochód) nie jest wykrywana przez IQR/Z-score | Wartość mieści się w granicach statystycznych | Dodaj regułę domenową w `DataValidator` (np. `income_positive`) |
+| Brak miejsca na dysku VM przy pracy z danymi | Mały dysk wirtualny (cache DVC + `feature_store/`) | `df -h`, usuń stare wersje w `feature_store/`, `dvc gc -w`; ewentualnie powiększ dysk VM |
 
 > 💡 **Wskazówka:** Zacznij od prostych reguł walidacji (schemat, zakresy, null) i stopniowo dodawaj bardziej zaawansowane (rozkłady statystyczne, korelacje między cechami). Zbyt skomplikowana walidacja na początku spowalnia rozwój.
 

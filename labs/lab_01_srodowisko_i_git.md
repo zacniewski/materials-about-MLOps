@@ -1,5 +1,7 @@
 # Laboratorium 1: Środowisko MLOps i Wersjonowanie Kodu
 
+> ℹ️ **Zanim zaczniesz:** przygotuj maszynę wirtualną Ubuntu 24.04 zgodnie z instrukcją [00_przygotowanie_maszyny_wirtualnej.md](00_przygotowanie_maszyny_wirtualnej.md). Wszystkie polecenia w tym laboratorium zakładają Ubuntu 24.04, Python 3.12 i powłokę `bash`.
+
 ## Informacje ogólne
 - **Czas:** 2 godziny
 - **Poziom:** Podstawowy
@@ -29,6 +31,25 @@ Po tym laboratorium student:
 - **Po co:** oddziela konfigurację od kodu, ułatwia porównywanie eksperymentów i zapewnia reprodukowalność.
 - **Jak i kiedy używać:** edytuj przed uruchomieniem treningu/pipeline'u (`dvc repro`) zawsze, gdy chcesz zmienić hiperparametry, podział danych lub zestaw cech — bez modyfikowania kodu źródłowego.
 
+### Jak Git i DVC współpracują
+
+Git przechowuje **mały plik-wskaźnik** (`*.dvc`, `dvc.lock`) zawierający hash MD5 danych. Same dane trafiają do lokalnego cache DVC (`.dvc/cache`), a opcjonalnie do zdalnego storage (`dvc push`). Dzięki temu commit Git jednoznacznie wskazuje, jaka wersja danych i modelu mu odpowiada.
+
+```mermaid
+flowchart LR
+    A[data/raw/customers.parquet] -- dvc add --> B[customers.parquet.dvc<br/>md5 + size]
+    A -- kopia/hardlink --> C[(.dvc/cache)]
+    B -- git add / commit --> D[(repozytorium Git)]
+    C -- dvc push --> E[(remote: dysk, S3, GDrive)]
+    D -- git checkout --> B
+    B -- dvc checkout --> A
+```
+
+**Typowe pułapki:**
+- `.gitignore` nie może ignorować całego katalogu, w którym leży plik `*.dvc` (np. `data/raw/`) — wtedy `dvc add` kończy się błędem `bad DVC file name ... is git-ignored`. DVC sam dopisuje właściwe wpisy do `data/raw/.gitignore`.
+- Metryki z `cache: false` (np. `reports/metrics/*.json`) **muszą** być w Git — inaczej `dvc metrics diff` nie ma z czym porównać.
+- Po `git checkout` zawsze wykonaj `dvc checkout` — Git zmienia tylko wskaźnik, a nie dane.
+
 ---
 
 ## Część 1: Konfiguracja środowiska (30 min)
@@ -36,7 +57,11 @@ Po tym laboratorium student:
 ### Krok 1.1: Instalacja narzędzi
 
 ```bash
-# Sprawdź wersję Pythona (wymagane >= 3.10)
+# Ubuntu 24.04: pakiety systemowe (bez python3-venv polecenie `python3 -m venv` nie zadziała)
+sudo apt update
+sudo apt install -y python3-venv python3-pip git curl
+
+# Sprawdź wersję Pythona (wymagane >= 3.10; Ubuntu 24.04 ma 3.12)
 python3 --version  # Linux/Mac
 # python --version  # Windows
 
@@ -48,21 +73,36 @@ source mlops-env/bin/activate  # Linux/Mac
 
 # Zainstaluj podstawowe narzędzia
 pip install --upgrade pip
-pip install \
-    scikit-learn==1.4.0 \
-    pandas==2.2.0 \
-    numpy==1.26.0 \
-    matplotlib==3.8.0 \
-    mlflow==2.10.0 \
-    dvc==3.40.0 \
-    great-expectations==0.18.0 \
-    pytest==8.0.0 \
-    ruff==0.3.0 \
-    pre-commit==3.6.0
 
-# Zapisz zależności
+# Wariant A (zalecany): zależności z repozytorium kursu
+# pip install -r /ścieżka/do/materials-about-MLOps/requirements.txt
+
+# Wariant B: minimalny zestaw dla Lab 1–2 (zakresy zgodne z requirements.txt kursu)
+pip install \
+    "scikit-learn>=1.5,<2.0" \
+    "pandas>=2.2,<3.0" \
+    "numpy>=1.26,<3.0" \
+    "matplotlib>=3.9,<4.0" \
+    "pyarrow>=17.0,<19.0" \
+    "pyyaml>=6.0,<7.0" \
+    "joblib>=1.4,<2.0" \
+    "mlflow>=2.15,<3.0" \
+    "sqlalchemy<2.1" \
+    "dvc>=3.55,<4.0" \
+    "pytest>=8.3,<9.0" \
+    "ruff>=0.6,<1.0" \
+    "pre-commit>=3.8,<4.0"
+
+# Sprawdź instalację
+dvc --version && mlflow --version && python -c "import sklearn, pandas, pyarrow; print('OK')"
+
+# Zapisz zależności projektu (dokładne wersje = reprodukowalność)
 pip freeze > requirements.txt
 ```
+
+> ⚠️ Nie przypinaj starych wersji typu `numpy==1.26.0` czy `scikit-learn==1.4.0` — nie mają gotowych kół (wheels) dla Pythona 3.12 albo kolidują z nowszym MLflow, więc `pip` próbuje je kompilować i kończy się błędem. Zakresy `>=x,<y` są bezpieczniejsze. `pyarrow` jest potrzebny do `to_parquet()`, a `sqlalchemy<2.1` — bo MLflow 2.x nie działa z SQLAlchemy 2.1 (błąd `cannot import name 'FallbackAsyncAdaptedQueuePool'` przy `mlflow server`).
+
+**Dlaczego wirtualne środowisko?** Każdy projekt ma własne wersje bibliotek; venv izoluje je od systemowego Pythona (w Ubuntu 24.04 `pip install` poza venv jest blokowane przez PEP 668 — błąd `externally-managed-environment`).
 
 ### Krok 1.2: Struktura projektu ML
 
@@ -132,14 +172,14 @@ __pycache__/
 mlops-env/
 *.pyc
 
-# Dane (śledzone przez DVC, nie Git)
-data/raw/
-data/processed/
-data/features/
-models/
+# Dane i modele: NIE ignorujemy tu katalogów data/ ani models/ —
+# DVC sam dopisze konkretne pliki do data/raw/.gitignore, models/.gitignore itd.
+# (zignorowanie całego data/raw/ blokuje commit pliku customers.parquet.dvc)
 
 # MLflow
 mlruns/
+mlartifacts/
+mlflow.db
 
 # Jupyter
 .ipynb_checkpoints/
@@ -150,9 +190,8 @@ mlruns/
 .vscode/
 *.swp
 
-# Raporty
+# Raporty (metryki JSON z reports/metrics/ commitujemy — potrzebne do dvc metrics diff)
 reports/figures/
-reports/metrics/
 
 # Środowisko
 .env
@@ -272,8 +311,8 @@ dvc add data/raw/customers.parquet
 # Sprawdź co DVC utworzył
 cat data/raw/customers.parquet.dvc
 
-# Commituj plik .dvc (nie same dane!)
-git add data/raw/customers.parquet.dvc data/.gitignore
+# Commituj plik .dvc (nie same dane!) oraz .gitignore utworzony przez DVC
+git add data/raw/customers.parquet.dvc data/raw/.gitignore
 git commit -m "data: add raw customer dataset v1 (10k samples)"
 ```
 
@@ -295,13 +334,17 @@ git log --oneline
 
 # Wróć do poprzedniej wersji danych
 git checkout HEAD~1 -- data/raw/customers.parquet.dvc
-dvc checkout
+dvc checkout data/raw/customers.parquet.dvc
 python -c "import pandas as pd; df = pd.read_parquet('data/raw/customers.parquet'); print(f'Wierszy: {len(df):,}')"
+# Oczekiwane: Wierszy: 10,000
 
 # Wróć do najnowszej wersji
 git checkout HEAD -- data/raw/customers.parquet.dvc
-dvc checkout
+dvc checkout data/raw/customers.parquet.dvc
+# Oczekiwane: Wierszy: 50,000
 ```
+
+> 💡 Podajemy jawnie cel (`dvc checkout <plik>.dvc`). Samo `dvc checkout` próbuje odtworzyć **wszystkie** wyjścia, także z `dvc.yaml` — gdy pipeline nie był jeszcze uruchomiony, zgłosi błąd `Checkout failed ... Is your cache up to date?`.
 
 ---
 
@@ -316,10 +359,10 @@ Utwórz `src/data/preprocess.py`:
 """Przetwarzanie danych surowych."""
 
 import pandas as pd
-import numpy as np
 from pathlib import Path
 import argparse
 import json
+import yaml
 
 def preprocess_data(
     input_path: str,
@@ -377,16 +420,25 @@ if __name__ == "__main__":
     parser.add_argument("--input", default="data/raw/customers.parquet")
     parser.add_argument("--output-train", default="data/processed/train.parquet")
     parser.add_argument("--output-test", default="data/processed/test.parquet")
-    parser.add_argument("--test-size", type=float, default=0.2)
+    parser.add_argument("--params", default="params.yaml")
     args = parser.parse_args()
     
-    stats = preprocess_data(args.input, args.output_train, args.output_test, args.test_size)
+    # Parametry czytamy z params.yaml — DVC śledzi data.test_size i data.seed,
+    # więc ich zmiana musi faktycznie wpływać na wynik etapu
+    with open(args.params) as f:
+        data_params = yaml.safe_load(f).get("data", {})
+    
+    stats = preprocess_data(
+        args.input, args.output_train, args.output_test,
+        test_size=data_params.get("test_size", 0.2),
+        seed=data_params.get("seed", 42),
+    )
     
     # Zapisz statystyki
     Path("reports/metrics").mkdir(parents=True, exist_ok=True)
     with open("reports/metrics/data_stats.json", "w") as f:
         json.dump(stats, f, indent=2)
-    print(f"Statystyki zapisane do reports/metrics/data_stats.json")
+    print("Statystyki zapisane do reports/metrics/data_stats.json")
 ```
 
 ### Krok 3.2: Skrypt treningu
@@ -398,7 +450,6 @@ Utwórz `src/models/train.py`:
 """Trening modelu predykcji churnu."""
 
 import pandas as pd
-import numpy as np
 import joblib
 import json
 import yaml
@@ -550,13 +601,42 @@ stages:
 # Uruchom cały pipeline
 dvc repro
 
-# Sprawdź status pipeline'u
+# Zobacz graf zależności
+dvc dag
+
+# Commituj stan pipeline'u (dvc.lock = "paragon" z hashami wejść/wyjść)
+git add dvc.yaml dvc.lock params.yaml data/processed/.gitignore models/.gitignore \
+        reports/metrics/ src/ scripts/
+git commit -m "feat: add DVC pipeline"
+
+# Sprawdź status pipeline'u (powinno być: Data and pipelines are up to date.)
 dvc status
 
-# Porównaj metryki między wersjami
+# Zmień parametr i porównaj metryki z poprzednim commitem
+sed -i 's/n_estimators: 100/n_estimators: 200/' params.yaml
+dvc repro
+dvc params diff
 dvc metrics show
-dvc metrics diff HEAD~1
+dvc metrics diff HEAD
 ```
+
+Graf pipeline'u (`dvc dag`):
+
+```
++-------------------------------+
+| data/raw/customers.parquet.dvc|
++-------------------------------+
+                *
+         +------------+
+         | preprocess |   <- params: data.test_size, data.seed
+         +------------+
+                *
+           +-------+
+           | train |      <- params: model, features
+           +-------+
+```
+
+> 💡 DVC uruchamia etap tylko wtedy, gdy zmienił się hash któregoś z `deps`, śledzony parametr albo brakuje `outs`. Dlatego każdy parametr używany w skrypcie powinien być zadeklarowany w `params:` — w przeciwnym razie zmiana w `params.yaml` nie wywoła przeliczenia.
 
 ---
 
@@ -568,7 +648,7 @@ dvc metrics diff HEAD~1
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -579,7 +659,7 @@ repos:
         args: ['--maxkb=5000']
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.0
+    rev: v0.6.9
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
@@ -590,12 +670,28 @@ repos:
 # Zainstaluj hooks
 pre-commit install
 
-# Przetestuj na wszystkich plikach
+# Przetestuj na wszystkich plikach (pierwsze uruchomienie pobiera hooki z GitHuba — wymaga internetu)
 pre-commit run --all-files
 
+# Hooki z autopoprawką (ruff --fix, ruff-format, end-of-file-fixer) zmieniają pliki
+# i zgłaszają "Failed" — to normalne. Dodaj poprawione pliki i uruchom ponownie:
+git add -u
+pre-commit run --all-files   # teraz wszystko powinno być "Passed"
+
 # Commituj konfigurację
-git add .pre-commit-config.yaml params.yaml dvc.yaml src/ scripts/
-git commit -m "feat: add DVC pipeline and pre-commit hooks"
+git add .pre-commit-config.yaml
+git commit -m "chore: add pre-commit hooks"
+```
+
+> 💡 Jeśli `end-of-file-fixer` poprawi pliki w `reports/metrics/`, DVC uzna metryki za zmienione. Uruchom wtedy `dvc repro` / `dvc commit` albo dodaj `exclude: ^reports/metrics/` do tego hooka. Wersje `rev` aktualizujesz poleceniem `pre-commit autoupdate`.
+
+**Jak działa pre-commit:** przy `git commit` Git wywołuje skrypt `.git/hooks/pre-commit`, który uruchamia zdefiniowane narzędzia tylko na plikach w staging. Jeśli któreś zwróci błąd, commit zostaje przerwany — błędy formatowania nie trafiają do repozytorium.
+
+```mermaid
+flowchart LR
+    A[git commit] --> B{pre-commit hooks}
+    B -- Passed --> C[commit zapisany]
+    B -- Failed / pliki poprawione --> D[git add -u] --> A
 ```
 
 ### Krok 4.2: Testy jednostkowe
@@ -731,11 +827,21 @@ git commit -m "test: add unit tests for preprocessing"
 | Problem | Przyczyna | Rozwiązanie |
 |---------|-----------|-------------|
 | `dvc add` zgłasza błąd | DVC nie jest zainicjalizowany | Uruchom `dvc init` w katalogu z repozytorium Git |
+| `bad DVC file name '...dvc' is git-ignored` | `.gitignore` ignoruje cały katalog (np. `data/raw/`) | Usuń taki wpis — DVC sam dopisze plik danych do `data/raw/.gitignore` |
+| `The virtual environment was not created successfully because ensurepip is not available` | Brak pakietu `python3-venv` w Ubuntu | `sudo apt install -y python3-venv` |
+| `error: externally-managed-environment` | `pip install` poza venv (PEP 668, Ubuntu 24.04) | Aktywuj venv: `source mlops-env/bin/activate` |
+| `ImportError: Unable to find a usable engine ... pyarrow` | Brak biblioteki do Parquet | `pip install "pyarrow>=17,<19"` |
+| `pip` kompiluje numpy/scikit-learn i kończy się błędem | Przypięte stare wersje bez wheels dla Pythona 3.12 | Użyj zakresów z `requirements.txt` kursu |
+| `dvc checkout` → `Checkout failed ... Is your cache up to date?` | Etapy z `dvc.yaml` nie były jeszcze uruchomione | `dvc checkout <plik>.dvc` lub najpierw `dvc repro` |
+| `dvc metrics diff` nic nie pokazuje | Metryki ignorowane przez Git lub niezacommitowane | Usuń `reports/metrics/` z `.gitignore`, commituj JSON-y i `dvc.lock` |
+| `pre-commit run` wisi / błąd połączenia | Brak internetu w VM (NAT/proxy) | Sprawdź `ping github.com`; ustaw kartę sieciową VirtualBox na NAT |
+| Trening bardzo wolny / VM się zawiesza | Za mało RAM/CPU przydzielone VM | Przydziel ≥ 4 GB RAM i ≥ 2 vCPU; ewentualnie generuj mniej danych (`--n-samples 10000`) |
+| Pliki w folderze współdzielonym VirtualBox: błędy `git`/`dvc` (symlinki, uprawnienia) | System plików `vboxsf` | Trzymaj projekt w katalogu domowym VM (`~/mlops-project`), nie w `/media/sf_*` |
 | `dvc repro` pomija wszystkie kroki | Żadne zależności się nie zmieniły | Zmień parametr w `params.yaml` lub dane wejściowe |
 | `pre-commit` nie działa | Hooks nie są zainstalowane | Uruchom `pre-commit install` |
 | `ModuleNotFoundError` w testach | Ścieżka do modułu nie jest w PYTHONPATH | Dodaj `sys.path.insert(0, ...)` lub zainstaluj pakiet w trybie editable (`pip install -e .`) |
 | `pip install` trwa bardzo długo | Brak cache pip | Użyj `pip install --cache-dir .pip-cache` |
-| Git commituje pliki danych | Brak wpisu w `.gitignore` | Dodaj `data/raw/` i `models/` do `.gitignore` |
+| Git commituje pliki danych | Plik nie jest śledzony przez DVC (brak wpisu w `data/raw/.gitignore`) | Użyj `dvc add <plik>` (lub zadeklaruj go w `outs` w `dvc.yaml`) — DVC doda wpis do `.gitignore`; jeśli plik już jest w Git: `git rm --cached <plik>` |
 
 > 💡 **Wskazówka:** Jeśli `dvc repro` nie wykrywa zmian w danych, sprawdź czy plik `.dvc` jest aktualny (`dvc status`). DVC śledzi zmiany na podstawie hash MD5 plików.
 

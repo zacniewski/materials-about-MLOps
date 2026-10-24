@@ -5,12 +5,50 @@
 - **Poziom:** Średni–Zaawansowany
 - **Wymagania wstępne:** Lab 1–4 ukończone
 
+> 🖥️ **Środowisko:** laboratorium jest przygotowane pod maszynę wirtualną Ubuntu 24.04 (Python 3.12, Docker Engine z wtyczką `docker compose`) — instrukcja jej przygotowania: [00_przygotowanie_maszyny_wirtualnej.md](00_przygotowanie_maszyny_wirtualnej.md). Komendy uruchamiaj z katalogu głównego projektu w aktywnym `venv` z zależnościami z `requirements.txt` repozytorium.
+
 ## Cele laboratorium
 Po tym laboratorium student:
 - zaimplementuje monitoring dryfu danych (KS test, PSI),
 - zbuduje dashboard monitoringu z Prometheus i Grafana,
 - skonfiguruje alerty przy wykryciu dryfu,
 - zasymuluje data drift i zweryfikuje działanie systemu.
+
+---
+
+## Część 0: Teoria w pigułce (10 min)
+
+Model ML „psuje się” bez zmiany kodu — zmienia się świat, z którego pochodzą dane. Rozróżniamy:
+
+| Rodzaj | Co się zmienia | Jak wykryć | Potrzebne etykiety? |
+|--------|----------------|------------|---------------------|
+| **Data drift** (covariate shift) | rozkład cech `P(X)` | testy statystyczne na cechach (KS, PSI, chi²) | nie |
+| **Prediction drift** | rozkład predykcji `P(ŷ)` | PSI/KS na wynikach modelu | nie |
+| **Concept drift** | zależność `P(y \| X)` | spadek metryk (AUC, F1) na nowych etykietach | tak |
+
+**Test Kołmogorowa–Smirnowa (KS)** porównuje dystrybuanty empiryczne dwóch próbek; statystyka `D = max|F_ref(x) − F_cur(x)|`. Przy dużych próbkach nawet niewielkie, biznesowo nieistotne różnice dają bardzo małe p-value — dlatego łączymy go z miarą „wielkości efektu”.
+
+**PSI (Population Stability Index)** dzieli zakres cechy na koszyki (tu: kwantyle danych referencyjnych) i sumuje:
+
+```
+PSI = Σ_i (cur_i − ref_i) · ln(cur_i / ref_i)
+```
+
+gdzie `ref_i`, `cur_i` to udziały obserwacji w koszyku `i`. Typowa interpretacja: `< 0.1` – stabilnie, `0.1–0.2` – umiarkowana zmiana, `> 0.2` – istotny dryft.
+
+Architektura, którą zbudujesz w tym laboratorium:
+
+```mermaid
+flowchart LR
+    P[Dane produkcyjne] --> M[DataDriftMonitor<br/>KS + PSI]
+    R[Dane referencyjne<br/>z treningu] --> M
+    M -->|raport JSON| F[(reports/metrics)]
+    M -->|alert_callback| S[MonitoringScheduler]
+    S -->|krytyczny dryft| T[Retraining<br/>pipeline z Lab 6]
+    M -->|Gauge PSI| E[metrics_exporter<br/>:8000/metrics]
+    E -->|scrape co 15 s| PR[Prometheus :9090]
+    PR --> G[Grafana :3000]
+```
 
 ---
 
@@ -95,6 +133,8 @@ class DriftReport:
 def calculate_psi(reference: np.ndarray, current: np.ndarray, n_bins: int = 10) -> float:
     """Oblicza Population Stability Index."""
     bins = np.percentile(reference, np.linspace(0, 100, n_bins + 1))
+    # Dla cech dyskretnych (np. Poisson) kwantyle się powtarzają – usuń duplikaty
+    bins = np.unique(bins)
     bins[0] = -np.inf
     bins[-1] = np.inf
 
@@ -619,15 +659,19 @@ scrape_configs:
     metrics_path: '/metrics'
 ```
 
+> ℹ️ Na Linuksie (Ubuntu w VM) nazwa `host.docker.internal` **nie istnieje domyślnie** — dlatego w `docker-compose` mapujemy ją na bramę hosta (`extra_hosts: host-gateway`). Bez tego Prometheus nie dosięgnie eksportera działającego poza kontenerem.
+
 ```yaml
 # monitoring/docker-compose-monitoring.yml
-version: '3.8'
+# (klucz `version:` jest przestarzały w Docker Compose v2 – pomijamy go)
 
 services:
   prometheus:
-    image: prom/prometheus:v2.50.0
+    image: prom/prometheus:v2.53.0
     ports:
       - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
     command:
@@ -651,19 +695,87 @@ volumes:
 ```
 
 ```bash
-# Uruchom monitoring stack
-cd monitoring
-docker-compose -f docker-compose-monitoring.yml up -d
+# Uruchom monitoring stack (z katalogu głównego projektu)
+docker compose -f monitoring/docker-compose-monitoring.yml up -d
+docker compose -f monitoring/docker-compose-monitoring.yml ps
 
-# Uruchom eksporter metryk (w osobnym terminalu)
+# Uruchom eksporter metryk (w osobnym terminalu, z katalogu głównego projektu)
 python src/monitoring/metrics_exporter.py
 
 # Sprawdź metryki
-curl http://localhost:8000/metrics | grep ml_
+curl -s http://localhost:8000/metrics | grep ^ml_
+
+# Czy Prometheus widzi target? (oczekiwane "health":"up")
+curl -s http://localhost:9090/api/v1/targets | grep -o '"health":"[a-z]*"'
 
 # Otwórz Grafana: http://localhost:3000 (admin/mlops123)
 # Otwórz Prometheus: http://localhost:9090
 ```
+
+W Grafanie dodaj data source: *Connections → Data sources → Prometheus*, URL `http://prometheus:9090` (nazwa usługi z compose, nie `localhost`). Przykładowe zapytania PromQL do paneli:
+
+```promql
+# PSI per cecha
+ml_data_drift_psi
+# Liczba predykcji na sekundę (wg poziomu ryzyka)
+sum by (risk_level) (rate(ml_predictions_total[1m]))
+# Latencja p95
+histogram_quantile(0.95, sum by (le) (rate(ml_prediction_latency_seconds_bucket[5m])))
+```
+
+> 🖥️ **VM bez GUI / dostęp z komputera-hosta:** jeśli przeglądarka działa na Twoim komputerze, a nie w VM, przekieruj porty w VirtualBox (*Ustawienia → Sieć → NAT → Przekierowanie portów*: 3000→3000, 9090→9090) albo użyj tunelu SSH: `ssh -L 3000:localhost:3000 -L 9090:localhost:9090 user@<ip-vm>`.
+
+Po zajęciach zatrzymaj stack i eksporter (`Ctrl+C`):
+
+```bash
+docker compose -f monitoring/docker-compose-monitoring.yml down      # -v usuwa też dane Grafany
+```
+
+### Krok 2.3 (opcjonalnie): Raport dryfu z Evidently
+
+[Evidently](https://github.com/evidentlyai/evidently) generuje gotowe raporty HTML z testami dryfu (dobiera test do typu i liczności danych). Uwaga: od wersji **0.7** API zmieniło się — importy `evidently.report` / `evidently.metric_preset` ze starszych tutoriali nie działają. Poniższy kod dotyczy `evidently>=0.7` (wersja z `requirements.txt`):
+
+```python
+# scripts/evidently_report.py
+"""Raport dryfu danych z Evidently (API >= 0.7)."""
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from evidently import DataDefinition, Dataset, Report
+from evidently.presets import DataDriftPreset
+
+rng = np.random.default_rng(42)
+reference = pd.DataFrame({
+    "age": rng.normal(40, 10, 2000),
+    "income": rng.normal(50000, 15000, 2000),
+})
+current = pd.DataFrame({
+    "age": rng.normal(48, 12, 500),          # dryft
+    "income": rng.normal(50000, 15000, 500), # bez zmian
+})
+
+definition = DataDefinition(numerical_columns=["age", "income"])
+report = Report([DataDriftPreset()])
+snapshot = report.run(
+    reference_data=Dataset.from_pandas(reference, data_definition=definition),
+    current_data=Dataset.from_pandas(current, data_definition=definition),
+)
+
+Path("reports").mkdir(exist_ok=True)
+snapshot.save_html("reports/evidently_drift.html")
+
+for metric in snapshot.dict()["metrics"]:
+    print(metric["metric_name"], "->", metric["value"])
+```
+
+```bash
+python scripts/evidently_report.py
+# Otwórz w przeglądarce: reports/evidently_drift.html
+```
+
+Evidently sam dobiera test: dla małych próbek (≤ 1000 wierszy) używa KS (wartość = p-value, dryft gdy < 0.05), dla większych — znormalizowanej odległości Wassersteina (dryft gdy > 0.1). Metodę widać w nazwie metryki, np. `ValueDrift(column=age,method=Wasserstein distance (normed),threshold=0.1)`. Porównaj wynik z własnym `DataDriftMonitor` dla tych samych danych.
 
 ---
 
@@ -823,10 +935,18 @@ python scripts/monitoring_scheduler.py
 | Problem | Przyczyna | Rozwiązanie |
 |---------|-----------|-------------|
 | PSI zawsze = 0 | Dane referencyjne i bieżące są identyczne | Upewnij się, że używasz różnych zbiorów danych (trening vs produkcja) |
-| KS test wykrywa drift przy małych próbkach | Test jest zbyt czuły dla dużych zbiorów | Zwiększ próg p-value lub użyj PSI jako głównej metryki |
+| KS test wykrywa drift przy nieistotnych różnicach | Przy dużych próbkach test jest bardzo czuły (p-value → 0) | Zwiększ próg p-value lub użyj PSI jako głównej metryki |
 | Prometheus nie zbiera metryk | Zły port lub ścieżka `/metrics` | Sprawdź `scrape_configs` w `prometheus.yml` i czy serwer metryk działa |
 | Grafana nie widzi Prometheus | Zły URL data source | Użyj `http://prometheus:9090` (nazwa kontenera w docker-compose) |
 | Fałszywe alarmy dryfu | Sezonowość lub normalna zmienność | Wydłuż okno czasowe alertu (np. `for: 1h` zamiast `for: 5m`) |
+| Target `ml-service` w Prometheus ma stan `DOWN` (`no such host`) | Na Linuksie brak `host.docker.internal` | Dodaj `extra_hosts: ["host.docker.internal:host-gateway"]` do usługi `prometheus`; upewnij się, że eksporter działa |
+| Target `DOWN` (`connection refused`) mimo `extra_hosts` | Zapora `ufw` blokuje ruch z sieci Dockera do hosta | `sudo ufw allow from 172.16.0.0/12 to any port 8000` lub tymczasowo `sudo ufw disable` w VM |
+| `docker-compose: command not found` | Ubuntu 24.04 + Docker Engine ma Compose v2 jako wtyczkę | Używaj `docker compose` (ze spacją) |
+| `permission denied ... docker.sock` | Użytkownik nie jest w grupie `docker` | `sudo usermod -aG docker $USER`, wyloguj się i zaloguj ponownie |
+| `OSError: [Errno 98] Address already in use` przy eksporterze | Port 8000 zajęty (np. API z Lab 4 lub poprzedni eksporter) | Zatrzymaj stary proces (`ss -ltnp \| grep 8000`) lub zmień port w `start_http_server` i w `prometheus.yml` |
+| Grafana/Prometheus niedostępne z komputera-hosta | Porty są otwarte tylko wewnątrz VM | Przekierowanie portów NAT w VirtualBox albo `ssh -L 3000:localhost:3000 ...` |
+| `ImportError: cannot import name 'Report' from 'evidently.report'` | Kod z tutorialu dla Evidently < 0.7 | Użyj `from evidently import Report` i `from evidently.presets import DataDriftPreset` (Krok 2.3) |
+| `ModuleNotFoundError: No module named 'src'` | Skrypt uruchomiony z innego katalogu | Uruchamiaj z katalogu głównego projektu: `python scripts/simulate_drift.py` |
 
 > 💡 **Wskazówka:** Testuj system monitoringu na syntetycznych danych z kontrolowanym dryftem — to pozwala zweryfikować, czy alerty wyzwalają się poprawnie, zanim wdrożysz na produkcję.
 

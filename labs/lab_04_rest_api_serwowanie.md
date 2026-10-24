@@ -1,5 +1,7 @@
 # Laboratorium 4: REST API i Serwowanie Modelu ML
 
+> ℹ️ **Środowisko:** laboratorium zakłada maszynę wirtualną Ubuntu 24.04 (VirtualBox) z Pythonem 3.12, aktywnym środowiskiem `venv` z zależnościami z `requirements.txt` oraz Docker Engine z oficjalnego repozytorium apt. Jeśli jeszcze go nie masz, zacznij od [Przygotowania maszyny wirtualnej](00_przygotowanie_maszyny_wirtualnej.md).
+
 ## Informacje ogólne
 - **Czas:** 2 godziny
 - **Poziom:** Średni
@@ -14,13 +16,61 @@ Po tym laboratorium student:
 
 ---
 
+## Wprowadzenie teoretyczne
+
+### Dlaczego model „za API”?
+
+Wytrenowany plik `churn_model.pkl` sam w sobie nie przynosi wartości — trzeba go **udostępnić** innym systemom (aplikacji mobilnej, CRM, pipeline'owi batch). Najczęstsze wzorce serwowania:
+
+| Wzorzec | Opis | Kiedy |
+|---------|------|-------|
+| **Online (REST/gRPC)** | Żądanie → natychmiastowa odpowiedź (ms) | Decyzje w czasie rzeczywistym (np. oferta retencyjna przy logowaniu) |
+| **Batch** | Predykcje dla wielu rekordów naraz, np. raz na dobę | Raporty, kampanie marketingowe |
+| **Streaming** | Predykcje dla zdarzeń z kolejki (Kafka) | Wykrywanie fraudów, IoT |
+| **Embedded** | Model w aplikacji/urządzeniu | Brak sieci, niskie opóźnienia |
+
+W tym laboratorium budujemy wariant **online** (endpoint `/predict`) oraz **mini-batch** (`/predict/batch`).
+
+### Architektura serwisu
+
+```mermaid
+flowchart LR
+    C[Klient<br/>curl / przeglądarka / benchmark] -->|HTTP JSON| N[Nginx<br/>reverse proxy :80]
+    N --> U[Uvicorn ASGI :8080]
+    U --> F[FastAPI<br/>routing + walidacja Pydantic]
+    F -->|to_features| M[(Model sklearn<br/>ładowany w lifespan)]
+    F -.->|BackgroundTasks| L[Log predykcji / metryki]
+```
+
+Kluczowe pojęcia:
+- **ASGI / Uvicorn** — serwer aplikacji uruchamiający asynchroniczną aplikację FastAPI. `--workers N` uruchamia N niezależnych procesów (każdy ma **własną kopię** modelu i stanu w pamięci!).
+- **Pydantic v2** — deklaratywna walidacja danych wejściowych. Błędne żądanie kończy się kodem **422** zanim dotrze do modelu. W Pydantic v2 walidatory definiujemy przez `@field_validator` (stary `@validator` z v1 jest przestarzały).
+- **Lifespan** — funkcja `asynccontextmanager` przekazana do `FastAPI(lifespan=...)`; kod przed `yield` wykonuje się raz przy starcie (ładowanie modelu), po `yield` — przy zamykaniu. Zastępuje przestarzałe `@app.on_event("startup")`.
+- **Health check** — lekki endpoint (`/health`) używany przez Dockera, Kubernetes i load balancery do sprawdzania, czy instancja może przyjmować ruch.
+- **Training-serving skew** — inna transformacja cech w treningu i w serwowaniu. Dlatego `to_features()` musi liczyć cechy **dokładnie tak samo** jak `preprocess.py` z Lab 1 (ta sama kolejność kolumn!).
+
+### Typowe pułapki
+- Ładowanie modelu **przy każdym żądaniu** (zamiast raz w `lifespan`) — latencja rośnie o rzędy wielkości.
+- Ciężkie obliczenia CPU w `async def` blokują pętlę zdarzeń; dla dużych modeli rozważ zwykłe `def` (FastAPI uruchomi je w puli wątków) lub osobne workery.
+- Stan w pamięci procesu (liczniki, logi) **nie jest współdzielony** między workerami ani replikami — do metryk w produkcji używa się Prometheusa (Lab 5).
+- Uruchomienie `uvicorn` z domyślnym `--host 127.0.0.1` w VM/kontenerze — serwis jest wtedy niewidoczny z zewnątrz.
+
+---
+
 ## Część 1: Budowa REST API z FastAPI (50 min)
 
 ### Krok 1.1: Instalacja zależności
 
+Wszystkie potrzebne pakiety (`fastapi`, `uvicorn`, `pydantic` v2, `httpx`, `pytest-asyncio`, `scikit-learn`, `joblib`) są już w `requirements.txt` repozytorium. Upewnij się, że masz aktywne `venv`:
+
 ```bash
-pip install fastapi==0.110.0 uvicorn==0.27.0 httpx==0.27.0 pytest-asyncio==0.23.0
+source .venv/bin/activate          # ścieżka zgodna z instrukcją przygotowania VM
+pip install -r requirements.txt
+python -c "import fastapi, pydantic; print(fastapi.__version__, pydantic.__version__)"
+# oczekiwane: fastapi >= 0.115, pydantic 2.x
 ```
+
+> ⚠️ Nie instaluj starszych wersji „na sztywno” (np. `fastapi==0.110.0`) — będą niezgodne z wersjami z `requirements.txt` i z kodem poniżej.
 
 ### Krok 1.2: Serwis predykcji
 
@@ -30,15 +80,15 @@ Utwórz `src/serving/api.py`:
 # src/serving/api.py
 """REST API dla modelu predykcji churnu."""
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from contextlib import asynccontextmanager
 import joblib
 import numpy as np
+import os
 import time
 import logging
-import json
 from pathlib import Path
 from datetime import datetime
 
@@ -58,8 +108,9 @@ class PredictionRequest(BaseModel):
     balance: float = Field(..., ge=0, description="Saldo konta")
     num_transactions_30d: int = Field(..., ge=0, description="Transakcje w 30 dniach")
 
-    @validator('income')
-    def income_reasonable(cls, v):
+    @field_validator('income')
+    @classmethod
+    def income_reasonable(cls, v: float) -> float:
         if v > 10_000_000:
             raise ValueError("Dochód zbyt wysoki")
         return round(v, 2)
@@ -90,8 +141,9 @@ class PredictionResponse(BaseModel):
 class BatchPredictionRequest(BaseModel):
     requests: list[PredictionRequest]
 
-    @validator('requests')
-    def max_batch_size(cls, v):
+    @field_validator('requests')
+    @classmethod
+    def max_batch_size(cls, v: list[PredictionRequest]) -> list[PredictionRequest]:
         if len(v) > 500:
             raise ValueError("Maksymalnie 500 rekordów w batchu")
         return v
@@ -124,7 +176,8 @@ state = AppState()
 async def lifespan(app: FastAPI):
     """Ładuje model przy starcie aplikacji."""
     logger.info("Uruchamianie serwisu ML...")
-    model_path = Path("models/churn_model.pkl")
+    # Ścieżkę można nadpisać zmienną środowiskową (przydatne w Dockerze)
+    model_path = Path(os.getenv("MODEL_PATH", "models/churn_model.pkl"))
 
     if model_path.exists():
         state.model = joblib.load(model_path)
@@ -203,7 +256,7 @@ async def health_check():
 async def get_metrics():
     """Zwraca metryki serwisu (ostatnie 1000 predykcji)."""
     if not state.prediction_log:
-        return {"message": "Brak danych"}
+        return {"total_predictions": state.total_predictions, "message": "Brak danych"}
 
     latencies = [e["latency_ms"] for e in state.prediction_log]
     probs = [e["probability"] for e in state.prediction_log]
@@ -288,8 +341,11 @@ async def predict_batch(batch: BatchPredictionRequest):
 
 ### Krok 1.3: Uruchomienie serwisu
 
+> 💡 Bez pliku `models/churn_model.pkl` (z Lab 1, `dvc repro`) serwis wystartuje w **trybie demo** z modelem wytrenowanym na danych syntetycznych — w logach zobaczysz `Brak pliku modelu – używam modelu demo`. To wystarcza do przejścia całego laboratorium.
+
 ```bash
-# Uruchom serwis
+# Uruchom serwis (z katalogu głównego projektu!)
+# --host 0.0.0.0 jest konieczne, aby API było widoczne spoza VM (z hosta)
 uvicorn src.serving.api:app --host 0.0.0.0 --port 8080 --reload
 
 # W osobnym terminalu – testuj API
@@ -325,7 +381,23 @@ curl -X POST http://localhost:8080/predict/batch \
 
 # Otwórz dokumentację Swagger
 # http://localhost:8080/docs
+
+# Sprawdź walidację – błędny wiek → 422 z opisem błędu
+curl -s -X POST http://localhost:8080/predict \
+  -H "Content-Type: application/json" \
+  -d '{"customer_id": 1, "age": -5, "income": 1, "tenure_months": 1, "num_products": 1,
+       "has_credit_card": 0, "is_active": 1, "balance": 0, "num_transactions_30d": 0}' \
+  | python3 -m json.tool
 ```
+
+#### Dostęp do API z komputera-hosta (VirtualBox)
+
+Domyślna karta sieciowa VirtualBox (NAT) nie pozwala hostowi połączyć się z VM. Masz dwie opcje:
+
+1. **Przekierowanie portów (NAT):** *Ustawienia VM → Sieć → Karta 1 → Zaawansowane → Przekierowanie portów* i dodaj regułę: protokół TCP, port hosta `8080`, port gościa `8080` (dla Nginx z Części 3 dodaj drugą regułę: port hosta np. `8081` → port gościa `80`). Następnie na hoście otwórz `http://localhost:8080/docs`.
+2. **Karta „Tylko host” (Host-only):** dodaj drugą kartę sieciową, w VM sprawdź adres poleceniem `ip -4 addr` (np. `192.168.56.101`) i otwórz `http://192.168.56.101:8080/docs`.
+
+W obu przypadkach uvicorn musi nasłuchiwać na `0.0.0.0`, a nie na `127.0.0.1`. Jeżeli w VM włączony jest firewall `ufw`, zezwól na port: `sudo ufw allow 8080/tcp`.
 
 ---
 
@@ -340,7 +412,6 @@ Utwórz `tests/model/test_api.py`:
 """Testy REST API serwisu ML."""
 
 import pytest
-import numpy as np
 from fastapi.testclient import TestClient
 import sys
 from pathlib import Path
@@ -349,9 +420,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.serving.api import app
 
-client = TestClient(app)
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def client():
+    """TestClient użyty jako context manager uruchamia `lifespan`,
+    czyli ładuje model. Bez `with` model NIE zostałby załadowany (503)."""
+    with TestClient(app) as c:
+        yield c
 
 @pytest.fixture
 def valid_request():
@@ -386,11 +462,11 @@ def high_risk_request():
 
 class TestHealthCheck:
 
-    def test_health_returns_200(self):
+    def test_health_returns_200(self, client):
         response = client.get("/health")
         assert response.status_code == 200
 
-    def test_health_response_schema(self):
+    def test_health_response_schema(self, client):
         response = client.get("/health")
         data = response.json()
         assert "status" in data
@@ -399,7 +475,7 @@ class TestHealthCheck:
         assert "uptime_seconds" in data
         assert "total_predictions" in data
 
-    def test_health_model_loaded(self):
+    def test_health_model_loaded(self, client):
         response = client.get("/health")
         data = response.json()
         assert data["model_loaded"] is True
@@ -408,11 +484,11 @@ class TestHealthCheck:
 
 class TestPrediction:
 
-    def test_predict_returns_200(self, valid_request):
+    def test_predict_returns_200(self, client, valid_request):
         response = client.post("/predict", json=valid_request)
         assert response.status_code == 200
 
-    def test_predict_response_schema(self, valid_request):
+    def test_predict_response_schema(self, client, valid_request):
         response = client.post("/predict", json=valid_request)
         data = response.json()
         assert "customer_id" in data
@@ -422,43 +498,43 @@ class TestPrediction:
         assert "model_version" in data
         assert "prediction_time_ms" in data
 
-    def test_predict_probability_in_range(self, valid_request):
+    def test_predict_probability_in_range(self, client, valid_request):
         response = client.post("/predict", json=valid_request)
         data = response.json()
         assert 0.0 <= data["churn_probability"] <= 1.0
 
-    def test_predict_customer_id_preserved(self, valid_request):
+    def test_predict_customer_id_preserved(self, client, valid_request):
         response = client.post("/predict", json=valid_request)
         data = response.json()
         assert data["customer_id"] == valid_request["customer_id"]
 
-    def test_predict_risk_level_valid(self, valid_request):
+    def test_predict_risk_level_valid(self, client, valid_request):
         response = client.post("/predict", json=valid_request)
         data = response.json()
         assert data["risk_level"] in ["low", "medium", "high"]
 
-    def test_predict_churn_consistent_with_probability(self, valid_request):
+    def test_predict_churn_consistent_with_probability(self, client, valid_request):
         response = client.post("/predict", json=valid_request)
         data = response.json()
         expected_prediction = data["churn_probability"] >= 0.5
         assert data["churn_prediction"] == expected_prediction
 
-    def test_predict_invalid_age_returns_422(self, valid_request):
+    def test_predict_invalid_age_returns_422(self, client, valid_request):
         invalid = {**valid_request, "age": -5}
         response = client.post("/predict", json=invalid)
         assert response.status_code == 422
 
-    def test_predict_invalid_income_returns_422(self, valid_request):
+    def test_predict_invalid_income_returns_422(self, client, valid_request):
         invalid = {**valid_request, "income": -1000}
         response = client.post("/predict", json=invalid)
         assert response.status_code == 422
 
-    def test_predict_missing_field_returns_422(self, valid_request):
+    def test_predict_missing_field_returns_422(self, client, valid_request):
         incomplete = {k: v for k, v in valid_request.items() if k != "age"}
         response = client.post("/predict", json=incomplete)
         assert response.status_code == 422
 
-    def test_predict_latency_reasonable(self, valid_request):
+    def test_predict_latency_reasonable(self, client, valid_request):
         response = client.post("/predict", json=valid_request)
         data = response.json()
         assert data["prediction_time_ms"] < 1000  # < 1 sekunda
@@ -467,21 +543,21 @@ class TestPrediction:
 
 class TestBatchPrediction:
 
-    def test_batch_predict_returns_correct_count(self, valid_request, high_risk_request):
+    def test_batch_predict_returns_correct_count(self, client, valid_request, high_risk_request):
         batch = {"requests": [valid_request, high_risk_request]}
         response = client.post("/predict/batch", json=batch)
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 2
 
-    def test_batch_predict_all_probabilities_valid(self, valid_request):
+    def test_batch_predict_all_probabilities_valid(self, client, valid_request):
         batch = {"requests": [valid_request] * 10}
         response = client.post("/predict/batch", json=batch)
         data = response.json()
         for item in data:
             assert 0.0 <= item["churn_probability"] <= 1.0
 
-    def test_batch_too_large_returns_422(self, valid_request):
+    def test_batch_too_large_returns_422(self, client, valid_request):
         batch = {"requests": [valid_request] * 501}
         response = client.post("/predict/batch", json=batch)
         assert response.status_code == 422
@@ -490,11 +566,11 @@ class TestBatchPrediction:
 
 class TestMetrics:
 
-    def test_metrics_endpoint_exists(self):
+    def test_metrics_endpoint_exists(self, client):
         response = client.get("/metrics")
         assert response.status_code == 200
 
-    def test_metrics_after_predictions(self, valid_request):
+    def test_metrics_after_predictions(self, client, valid_request):
         # Wykonaj kilka predykcji
         for _ in range(5):
             client.post("/predict", json=valid_request)
@@ -517,11 +593,61 @@ pytest tests/model/test_api.py -v --cov=src/serving --cov-report=term-missing
 
 ## Część 3: Konteneryzacja z Docker (30 min)
 
+### Teoria: obraz, kontener, warstwy
+
+- **Obraz** to niezmienny szablon (system plików + metadane), **kontener** to uruchomiona instancja obrazu.
+- Każda instrukcja `RUN`/`COPY` tworzy **warstwę**. Docker cache'uje warstwy — dlatego najpierw kopiujemy plik z zależnościami i instalujemy pakiety, a dopiero potem kod (zmiana kodu nie wymusza ponownej instalacji pakietów).
+- Kontener powinien działać jako **użytkownik bez uprawnień root** i zawierać tylko to, co potrzebne do serwowania (bez MLflow, DVC, Jupytera…) — stąd osobny, odchudzony plik zależności.
+
+```
+ Host (Windows/macOS)      VM Ubuntu 24.04                 Kontener churn-api
++------------------+     +-----------------------+     +--------------------------+
+| przeglądarka     | NAT | curl localhost:8080   | -p  | uvicorn 0.0.0.0:8080     |
+| localhost:8080 --+---->| port 8080 ------------+---->| /app/models  (ro, -v)    |
++------------------+ fwd | ./models -------------+---->| user: mluser (uid 1000)  |
+                         +-----------------------+     +--------------------------+
+```
+
+> ⚠️ **Docker w VM Ubuntu:** jeżeli `docker ps` zwraca `permission denied while trying to connect to the Docker daemon socket`, dodaj użytkownika do grupy `docker` i zaloguj się ponownie (lub wykonaj `newgrp docker`):
+> ```bash
+> sudo usermod -aG docker $USER
+> newgrp docker
+> docker run --rm hello-world
+> ```
+> Alternatywnie poprzedzaj polecenia `sudo`. Pamiętaj, że członkostwo w grupie `docker` daje uprawnienia równoważne root.
+
 ### Krok 3.1: Dockerfile
+
+Utwórz odchudzony plik zależności serwisu `requirements-api.txt` (zakresy wersji zgodne z głównym `requirements.txt`):
+
+```text
+# requirements-api.txt – tylko to, co potrzebne do serwowania
+fastapi>=0.115,<1.0
+uvicorn>=0.30,<1.0
+pydantic>=2.8,<3.0
+scikit-learn>=1.5,<2.0
+numpy>=1.26,<3.0
+joblib>=1.4,<2.0
+```
+
+> ⚠️ Wersja `scikit-learn` w obrazie powinna być **taka sama** jak ta, którą wytrenowałeś model (`pip show scikit-learn`). Pickle z innej wersji może wygenerować `InconsistentVersionWarning` lub się nie wczytać — w razie potrzeby przypnij dokładną wersję (`scikit-learn==X.Y.Z`).
+
+Utwórz też `.dockerignore`, aby nie wysyłać do demona Dockera środowiska wirtualnego i danych:
+
+```text
+# .dockerignore
+.venv/
+.git/
+.dvc/cache/
+data/
+mlruns/
+__pycache__/
+*.pyc
+```
 
 ```dockerfile
 # Dockerfile
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 LABEL maintainer="mlops-lab"
 LABEL description="Churn Prediction API"
@@ -533,18 +659,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalacja zależności Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir \
-    fastapi==0.110.0 \
-    uvicorn==0.27.0 \
-    scikit-learn==1.4.0 \
-    pandas==2.2.0 \
-    numpy==1.26.0 \
-    joblib==1.3.0 \
-    pydantic==2.6.0
+# Instalacja zależności Python (osobna warstwa – cache przy zmianach kodu)
+COPY requirements-api.txt .
+RUN pip install --no-cache-dir -r requirements-api.txt
 
-# Kopiowanie kodu
+# Kopiowanie kodu (katalog models/ musi istnieć – może być pusty)
 COPY src/ ./src/
 COPY models/ ./models/
 
@@ -564,7 +683,12 @@ CMD ["uvicorn", "src.serving.api:app", \
      "--log-level", "info"]
 ```
 
+> 💡 Przy `--workers 2` każdy proces ma własne liczniki — `/metrics` i `total_predictions` w `/health` pokażą wartości tylko z procesu, który obsłużył dane żądanie. To zamierzona ilustracja problemu stanu w pamięci (rozwiązanie: Prometheus w Lab 5).
+
 ```bash
+# Upewnij się, że katalog models/ istnieje (inaczej COPY models/ zakończy się błędem)
+mkdir -p models
+
 # Zbuduj obraz
 docker build -t churn-api:latest .
 
@@ -575,11 +699,12 @@ docker run -d \
   -v $(pwd)/models:/app/models:ro \
   churn-api:latest
 
-# Sprawdź logi
-docker logs churn-api -f
+# Sprawdź logi (Ctrl+C kończy podgląd, kontener działa dalej)
+docker logs -f churn-api
 
-# Przetestuj
+# Przetestuj (po ~15 s status w `docker ps` zmieni się na "healthy")
 curl http://localhost:8080/health
+docker ps --filter name=churn-api
 
 # Zatrzymaj kontener
 docker stop churn-api && docker rm churn-api
@@ -589,7 +714,7 @@ docker stop churn-api && docker rm churn-api
 
 ```yaml
 # docker-compose.yml
-version: '3.8'
+# (klucz `version:` jest przestarzały w Docker Compose v2 i został pominięty)
 
 services:
   ml-api:
@@ -615,7 +740,8 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - ml-api
+      ml-api:
+        condition: service_healthy
 ```
 
 ```nginx
@@ -641,14 +767,21 @@ server {
 ```
 
 ```bash
-# Uruchom stack
-docker-compose up -d
+# Docker Compose v2 to wtyczka `docker compose` (ze spacją) – pakiet docker-compose-plugin
+# z repozytorium Dockera. Stare polecenie `docker-compose` (z myślnikiem) nie jest instalowane.
+docker compose up -d --build
 
-# Sprawdź status
-docker-compose ps
+# Sprawdź status (ml-api powinno być "healthy")
+docker compose ps
 
-# Zatrzymaj
-docker-compose down
+# Przetestuj przez Nginx (prefiks /api/ jest obcinany przez proxy_pass)
+curl http://localhost/health
+curl -X POST http://localhost/api/predict -H "Content-Type: application/json" \
+  -d '{"customer_id": 1, "age": 40, "income": 50000, "tenure_months": 12, "num_products": 2,
+       "has_credit_card": 1, "is_active": 1, "balance": 1000, "num_transactions_30d": 5}'
+
+# Zatrzymaj i usuń kontenery
+docker compose down
 ```
 
 ---
@@ -665,7 +798,6 @@ import httpx
 import time
 import statistics
 import asyncio
-import json
 
 BASE_URL = "http://localhost:8080"
 
@@ -688,9 +820,9 @@ async def benchmark_single_predictions(n_requests: int = 100):
     async with httpx.AsyncClient(base_url=BASE_URL) as client:
         for i in range(n_requests):
             request = {**SAMPLE_REQUEST, "customer_id": i + 1}
-            t0 = time.time()
+            t0 = time.perf_counter()
             response = await client.post("/predict", json=request)
-            latency_ms = (time.time() - t0) * 1000
+            latency_ms = (time.perf_counter() - t0) * 1000
             assert response.status_code == 200
             latencies.append(latency_ms)
 
@@ -716,9 +848,9 @@ async def benchmark_batch_predictions(batch_sizes: list[int] = [1, 10, 50, 100])
             ]
             batch = {"requests": requests}
 
-            t0 = time.time()
+            t0 = time.perf_counter()
             response = await client.post("/predict/batch", json=batch)
-            elapsed_ms = (time.time() - t0) * 1000
+            elapsed_ms = (time.perf_counter() - t0) * 1000
 
             assert response.status_code == 200
             ms_per_record = elapsed_ms / batch_size
@@ -755,10 +887,20 @@ python scripts/benchmark_api.py
 |---------|-----------|-------------|
 | `422 Unprocessable Entity` | Dane nie pasują do schematu Pydantic | Sprawdź typy i zakresy pól w żądaniu JSON |
 | `503 Service Unavailable` | Model nie jest załadowany | Sprawdź ścieżkę do modelu i logi startu aplikacji |
-| Docker build trwa długo | Brak cache warstw | Kopiuj `requirements.txt` przed kodem źródłowym |
-| Wysoka latencja w Dockerze | Za mało workerów uvicorn | Zwiększ `--workers` (reguła: 2 × CPU + 1) |
-| Testy nie widzą modelu | Brak fixture z modelem testowym | Użyj `@pytest.fixture` do tworzenia modelu demo |
+| Docker build trwa długo | Brak cache warstw, duży kontekst budowania | Kopiuj `requirements-api.txt` przed kodem źródłowym; dodaj `.dockerignore` (bez `.venv/`, `data/`) |
+| Wysoka latencja w Dockerze | Za mało workerów uvicorn | Zwiększ `--workers` (orientacyjnie liczba rdzeni CPU przydzielonych VM) |
+| Testy zwracają `503` / `model_loaded is False` | `TestClient(app)` użyty bez `with` – `lifespan` się nie wykonał | Użyj fixture `with TestClient(app) as c: yield c` (jak w Kroku 2.1) |
+| `ModuleNotFoundError: No module named 'src'` | `uvicorn`/`pytest` uruchomione spoza katalogu głównego projektu | Uruchamiaj z katalogu głównego repozytorium |
+| `PydanticDeprecatedSince20: @validator` | Kod w stylu Pydantic v1 | Użyj `@field_validator` + `@classmethod` |
+| `UserWarning: X does not have valid feature names` | Model z Lab 1 trenowany na `DataFrame`, a API przekazuje `ndarray` | Ostrzeżenie niegroźne; można przekazywać `pd.DataFrame` z nazwami kolumn |
+| `PytestDeprecationWarning: asyncio_default_fixture_loop_scope is unset` | Nowsze `pytest-asyncio` | Niegroźne; można dodać do `pytest.ini`: `asyncio_default_fixture_loop_scope = function` |
 | `Connection refused` w benchmarku | Serwis nie jest uruchomiony | Uruchom `uvicorn` w osobnym terminalu przed benchmarkiem |
+| `[Errno 98] Address already in use` | Port 8080 zajęty (np. działa kontener `churn-api` lub stary uvicorn) | `docker ps` / `docker stop churn-api` lub `sudo ss -ltnp \| grep 8080` i zakończ proces |
+| `permission denied ... /var/run/docker.sock` | Użytkownik VM nie jest w grupie `docker` | `sudo usermod -aG docker $USER`, potem wyloguj się lub `newgrp docker` (albo użyj `sudo docker ...`) |
+| API działa w VM, ale nie z hosta | Brak przekierowania portów VirtualBox lub uvicorn na `127.0.0.1` | Dodaj regułę NAT 8080→8080 (patrz Krok 1.3), uruchamiaj z `--host 0.0.0.0` |
+| `docker-compose: command not found` | Compose v2 to wtyczka | Użyj `docker compose` (ze spacją); w razie braku: `sudo apt install docker-compose-plugin` |
+| `COPY models/ ./models/` – `not found` | Brak katalogu `models/` | `mkdir -p models` lub wytrenuj model (`dvc repro` z Lab 1) |
+| Nginx: `bind: address already in use` na porcie 80 | Port 80 w VM zajęty (np. apache2) | Zmień mapowanie na `"8081:80"` w `docker-compose.yml` |
 
 > 💡 **Wskazówka:** Używaj `uvicorn main:app --reload` podczas developmentu — serwer automatycznie restartuje się po zmianach w kodzie. Na produkcji **nigdy** nie używaj `--reload`.
 

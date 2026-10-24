@@ -1,5 +1,7 @@
 # Laboratorium 2: Śledzenie Eksperymentów z MLflow
 
+> ℹ️ **Zanim zaczniesz:** przygotuj maszynę wirtualną Ubuntu 24.04 zgodnie z instrukcją [00_przygotowanie_maszyny_wirtualnej.md](00_przygotowanie_maszyny_wirtualnej.md) i ukończ [Laboratorium 1](lab_01_srodowisko_i_git.md) (potrzebne są pliki `data/processed/train.parquet` i `test.parquet` utworzone przez `dvc repro`). Przykłady sprawdzono z MLflow 2.x (`mlflow>=2.15,<3.0` z `requirements.txt`).
+
 ## Informacje ogólne
 - **Czas:** 2 godziny
 - **Poziom:** Podstawowy–Średni
@@ -11,6 +13,41 @@ Po tym laboratorium student:
 - zaloguje parametry, metryki i artefakty do MLflow,
 - porówna eksperymenty w UI MLflow,
 - zarejestruje model w MLflow Model Registry.
+
+## Teoria: po co śledzić eksperymenty?
+
+Bez narzędzia do śledzenia wyniki eksperymentów kończą w notatkach, nazwach plików (`model_final_v2_NEW.pkl`) i pamięci autora. MLflow Tracking zapisuje dla każdego uruchomienia **co** zostało wytrenowane, **z jakimi parametrami**, **na jakich danych** i **z jakim wynikiem** — dzięki temu eksperyment da się porównać i odtworzyć.
+
+| Pojęcie | Znaczenie | Przykład |
+|--------|-----------|----------|
+| **Experiment** | Grupa powiązanych runów (jeden problem biznesowy) | `churn-prediction` |
+| **Run** | Pojedyncze uruchomienie kodu treningowego | `RF-deep` |
+| **Parameter** | Wartość wejściowa, zapisywana raz (string) | `max_depth=10` |
+| **Metric** | Wartość liczbowa, może mieć historię (`step`) | `auc_roc=0.79` |
+| **Tag** | Dowolna etykieta do filtrowania | `model_type=tree` |
+| **Artifact** | Plik wynikowy: wykres, JSON, model | `plots/roc_curve.png` |
+| **Registered Model** | Nazwany model w rejestrze z numerowanymi wersjami | `churn-randomforestclassifier` v3 |
+| **Alias** | Ruchoma etykieta wskazująca wersję modelu | `@champion` → v3 |
+
+Architektura używana w laboratorium:
+
+```mermaid
+flowchart LR
+    subgraph VM[Ubuntu 24.04 VM]
+        S[skrypt Python<br/>mlflow.log_*] -- HTTP :5000 --> T[mlflow server]
+        T --> DB[(mlflow.db<br/>SQLite: parametry,<br/>metryki, rejestr)]
+        T --> A[(./mlartifacts<br/>wykresy, modele)]
+    end
+    B[Przeglądarka na hoście] -- port forwarding<br/>127.0.0.1:5000 --> T
+```
+
+- **Backend store** (SQLite/PostgreSQL) przechowuje metadane. Model Registry wymaga backendu bazodanowego — dlatego `sqlite:///mlflow.db`, a nie katalog plików.
+- **Artifact store** przechowuje pliki. Z opcją `--artifacts-destination` klient wysyła artefakty **przez serwer** (proxy HTTP), więc nie musi mieć dostępu do dysku serwera.
+
+**Pułapki:**
+- Parametru nie można nadpisać inną wartością w tym samym runie (`MlflowException: Changing param values is not allowed`).
+- Metryka na zbiorze testowym przy wielu próbach "podglądania" przestaje być obiektywna — do wyboru modelu używaj CV na zbiorze treningowym.
+- Przy niezbalansowanych klasach (tu ~10% churnu) wysokie `accuracy` nic nie znaczy, a `F1`/`recall` przy progu 0.5 bywają bliskie 0 — patrz `auc_roc` i `precision`/`recall`.
 
 ---
 
@@ -24,24 +61,41 @@ source mlops-env/bin/activate  # Linux/Mac
 # mlops-env\Scripts\activate   # Windows
 cd mlops-project
 
-# Uruchom MLflow UI (w osobnym terminalu lub w tle)
+# Uruchom MLflow UI w OSOBNYM terminalu (zostaw go otwartego; Ctrl+C zatrzymuje serwer)
 mlflow server \
     --backend-store-uri sqlite:///mlflow.db \
-    --default-artifact-root ./mlruns \
+    --artifacts-destination ./mlartifacts \
     --host 0.0.0.0 \
-    --port 5000 &
+    --port 5000
 
-# Sprawdź czy działa
+# W drugim terminalu: sprawdź czy działa (oczekiwana odpowiedź: OK)
 curl http://localhost:5000/health
 # Otwórz w przeglądarce: http://localhost:5000
 ```
 
+> 💡 `--host 0.0.0.0` oznacza nasłuchiwanie na wszystkich interfejsach sieciowych VM — jest potrzebne, aby UI było dostępne z przeglądarki na komputerze-hoście. Przy domyślnym `127.0.0.1` serwer jest widoczny tylko wewnątrz VM. Nie wystawiaj tak serwera w sieci publicznej — MLflow domyślnie nie ma uwierzytelniania.
+
+**Dostęp z hosta (VirtualBox, karta sieciowa NAT):** *Ustawienia VM → Sieć → Karta 1 (NAT) → Zaawansowane → Przekierowanie portów* i dodaj regułę: protokół TCP, port hosta `5000`, port gościa `5000` (IP można zostawić puste). Albo z terminala hosta (VM wyłączona):
+
+```bash
+VBoxManage modifyvm "nazwa-VM" --natpf1 "mlflow,tcp,,5000,,5000"
+```
+
+Następnie na hoście otwórz `http://localhost:5000`. Jeśli port 5000 jest zajęty (np. na macOS przez AirPlay Receiver), użyj `--port 5001` i takiego samego przekierowania. Jeśli w VM działa zapora `ufw`: `sudo ufw allow 5000/tcp`.
+
 ### Krok 1.2: Konfiguracja klienta MLflow
+
+Adres serwera można podać w kodzie (`mlflow.set_tracking_uri`) albo zmienną środowiskową — ta druga opcja pozwala uruchamiać ten sam kod lokalnie i w CI bez zmian:
+
+```bash
+export MLFLOW_TRACKING_URI=http://localhost:5000
+```
+
+Pomocnicza funkcja (opcjonalna — skrypty poniżej ustawiają URI samodzielnie):
 
 ```python
 # configs/mlflow_config.py
 import mlflow
-import os
 
 def setup_mlflow(
     tracking_uri: str = "http://localhost:5000",
@@ -82,17 +136,18 @@ Utwórz `src/models/experiment.py`:
 # src/models/experiment.py
 """Eksperymenty ML z pełnym logowaniem do MLflow."""
 
+import os
 import mlflow
 import mlflow.sklearn
 import pandas as pd
 import numpy as np
-import joblib
 import json
 import time
+import tempfile
+import matplotlib
+matplotlib.use("Agg")  # zapis wykresów do plików bez okna (działa też przez SSH)
 import matplotlib.pyplot as plt
 from pathlib import Path
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import cross_val_score
@@ -102,8 +157,8 @@ from sklearn.metrics import (
     RocCurveDisplay, ConfusionMatrixDisplay
 )
 
-# Konfiguracja MLflow
-mlflow.set_tracking_uri("http://localhost:5000")
+# Konfiguracja MLflow (zmienna MLFLOW_TRACKING_URI ma pierwszeństwo)
+mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000"))
 mlflow.set_experiment("churn-prediction")
 
 FEATURE_COLS = [
@@ -132,10 +187,11 @@ def compute_metrics(model, X_test, y_test) -> dict:
     
     return {
         "auc_roc": float(roc_auc_score(y_test, y_prob)),
-        "f1_score": float(f1_score(y_test, y_pred)),
+        # zero_division=0: brak ostrzeżenia, gdy model nie przewidzi żadnego churnu
+        "f1_score": float(f1_score(y_test, y_pred, zero_division=0)),
         "accuracy": float(accuracy_score(y_test, y_pred)),
-        "precision": float(precision_score(y_test, y_pred)),
-        "recall": float(recall_score(y_test, y_pred)),
+        "precision": float(precision_score(y_test, y_pred, zero_division=0)),
+        "recall": float(recall_score(y_test, y_pred, zero_division=0)),
     }
 
 def plot_roc_curve(model, X_test, y_test, save_path: str):
@@ -206,14 +262,14 @@ def run_experiment(
         mlflow.log_metric("cv_auc_mean", float(cv_scores.mean()))
         mlflow.log_metric("cv_auc_std", float(cv_scores.std()))
         
-        # --- Wykresy jako artefakty ---
-        Path("/tmp/mlflow_artifacts").mkdir(exist_ok=True)
+        # --- Wykresy jako artefakty (osobny katalog tymczasowy dla każdego runu) ---
+        art_dir = Path(tempfile.mkdtemp(prefix="mlflow_artifacts_"))
         
-        plot_roc_curve(pipeline, X_test, y_test, "/tmp/mlflow_artifacts/roc_curve.png")
-        plot_confusion_matrix(pipeline, X_test, y_test, "/tmp/mlflow_artifacts/confusion_matrix.png")
+        plot_roc_curve(pipeline, X_test, y_test, str(art_dir / "roc_curve.png"))
+        plot_confusion_matrix(pipeline, X_test, y_test, str(art_dir / "confusion_matrix.png"))
         
-        mlflow.log_artifact("/tmp/mlflow_artifacts/roc_curve.png", "plots")
-        mlflow.log_artifact("/tmp/mlflow_artifacts/confusion_matrix.png", "plots")
+        mlflow.log_artifact(str(art_dir / "roc_curve.png"), "plots")
+        mlflow.log_artifact(str(art_dir / "confusion_matrix.png"), "plots")
         
         # --- Feature importance (dla modeli drzewiastych) ---
         model = pipeline.named_steps['model']
@@ -221,10 +277,10 @@ def run_experiment(
             importances = model.feature_importances_
             fi_dict = dict(zip(FEATURE_COLS, importances.tolist()))
             
-            # Zapisz jako JSON
-            with open("/tmp/mlflow_artifacts/feature_importance.json", "w") as f:
+            # Zapisz jako JSON (alternatywa bez pliku: mlflow.log_dict(fi_dict, "feature_importance.json"))
+            with open(art_dir / "feature_importance.json", "w") as f:
                 json.dump(fi_dict, f, indent=2)
-            mlflow.log_artifact("/tmp/mlflow_artifacts/feature_importance.json")
+            mlflow.log_artifact(str(art_dir / "feature_importance.json"))
             
             # Wykres
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -234,14 +290,16 @@ def run_experiment(
             ax.set_xticklabels([FEATURE_COLS[i] for i in sorted_idx], rotation=45, ha='right')
             ax.set_title(f"Feature Importance – {model_class.__name__}")
             plt.tight_layout()
-            plt.savefig("/tmp/mlflow_artifacts/feature_importance.png", dpi=100)
+            plt.savefig(art_dir / "feature_importance.png", dpi=100)
             plt.close()
-            mlflow.log_artifact("/tmp/mlflow_artifacts/feature_importance.png", "plots")
+            mlflow.log_artifact(str(art_dir / "feature_importance.png"), "plots")
         
         # --- Logowanie modelu ---
+        # input_example pozwala MLflow wyznaczyć sygnaturę (schemat wejścia/wyjścia)
         mlflow.sklearn.log_model(
             pipeline,
-            "model",
+            artifact_path="model",
+            input_example=X_train.head(5),
             registered_model_name=f"churn-{model_class.__name__.lower()}"
         )
         
@@ -314,18 +372,33 @@ print(f"\nNajlepszy model: {results_df.iloc[0]['name']} (AUC={results_df.iloc[0]
 ```
 
 ```bash
-# Uruchom eksperymenty
+# Uruchom eksperymenty (z katalogu mlops-project; serwer MLflow musi działać)
 python scripts/run_experiments.py
 
 # Otwórz MLflow UI i porównaj wyniki
 # http://localhost:5000
 ```
 
+> ⏱️ Na VM z 2 vCPU i 50 tys. wierszy całość (6 modeli × trening + 5-krotna CV) trwa kilka minut; najdłużej `GBM-tuned`. Aby przyspieszyć, wygeneruj mniejszy zbiór w Lab 1 albo zmniejsz `cv=5` do `cv=3`.
+
+> ℹ️ Wyniki dla danych syntetycznych z Lab 1: AUC ok. 0.74 (LR) i ok. 0.79–0.80 (RF/GBM). `F1` i `recall` są bardzo niskie (czasem 0.0), bo przy ~10% churnu modele rzadko przekraczają próg 0.5 — to dobry punkt wyjścia do dyskusji o progu decyzyjnym i `class_weight="balanced"`.
+
 ---
 
 ## Część 3: MLflow Model Registry (30 min)
 
 ### Krok 3.1: Rejestracja i zarządzanie modelami
+
+Każde wywołanie `log_model(..., registered_model_name=...)` tworzy nową **wersję** modelu w rejestrze (v1, v2, ...). Cykl życia wersji można opisać na dwa sposoby:
+
+```mermaid
+flowchart LR
+    R[run: log_model] --> V[wersja vN<br/>w rejestrze]
+    V -- stary sposób<br/>(stages, przestarzałe) --> S[Staging] --> P[Production] --> AR[Archived]
+    V -- zalecany sposób<br/>(aliasy + tagi) --> C["@challenger"] --> CH["@champion"]
+```
+
+> ⚠️ **Stages są przestarzałe** od MLflow 2.9: `transition_model_version_stage` i `get_latest_versions` działają w MLflow 2.x, ale wypisują `FutureWarning` i zostaną usunięte w przyszłej wersji. Poniższy skrypt pokazuje klasyczny przepływ Staging → Production (często spotykany w istniejących projektach), a Krok 3.2 — zalecany wariant z aliasami.
 
 ```python
 # scripts/manage_registry.py
@@ -340,11 +413,11 @@ client = MlflowClient()
 MODEL_NAME = "churn-randomforestclassifier"
 
 def list_registered_models():
-    """Wyświetla wszystkie zarejestrowane modele."""
+    """Wyświetla wszystkie zarejestrowane modele i ich wersje."""
     print("\n=== Zarejestrowane modele ===")
     for rm in client.search_registered_models():
         print(f"\nModel: {rm.name}")
-        for mv in rm.latest_versions:
+        for mv in client.search_model_versions(f"name='{rm.name}'"):
             print(f"  v{mv.version} | stage={mv.current_stage} | run={mv.run_id[:8]}...")
 
 def promote_best_model(model_name: str, min_auc: float = 0.80):
@@ -436,6 +509,42 @@ if staging_version:
 python scripts/manage_registry.py
 ```
 
+### Krok 3.2: Zalecany wariant — aliasy i tagi
+
+Alias to nazwana, przesuwalna etykieta (np. `champion`) wskazująca konkretną wersję. Kod serwujący ładuje zawsze `models:/<nazwa>@champion`, a "wdrożenie" nowej wersji to przestawienie aliasu — bez zmian w kodzie.
+
+```python
+# scripts/registry_aliases.py
+"""Zarządzanie wersjami modelu przez aliasy (MLflow >= 2.9)."""
+
+import mlflow
+from mlflow import MlflowClient
+
+mlflow.set_tracking_uri("http://localhost:5000")
+client = MlflowClient()
+
+MODEL_NAME = "churn-randomforestclassifier"
+
+# Wybierz wersję z najwyższym AUC
+versions = client.search_model_versions(f"name='{MODEL_NAME}'")
+best = max(versions, key=lambda mv: client.get_run(mv.run_id).data.metrics.get("auc_roc", 0))
+
+# Oznacz wersję tagiem i ustaw alias "champion" (poprzednie wskazanie aliasu jest zastępowane)
+client.set_model_version_tag(MODEL_NAME, best.version, "validation_status", "approved")
+client.set_registered_model_alias(MODEL_NAME, "champion", best.version)
+
+mv = client.get_model_version_by_alias(MODEL_NAME, "champion")
+print(f"@champion -> v{mv.version}, tagi: {mv.tags}")
+
+# Ładowanie modelu po aliasie — bez znajomości numeru wersji i ścieżki
+model = mlflow.sklearn.load_model(f"models:/{MODEL_NAME}@champion")
+print(f"Załadowano: {type(model).__name__}")
+```
+
+```bash
+python scripts/registry_aliases.py
+```
+
 ---
 
 ## Część 4: Porównanie eksperymentów (30 min)
@@ -448,9 +557,10 @@ python scripts/manage_registry.py
 
 import mlflow
 import pandas as pd
-import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use('Agg')  # musi być wywołane PRZED importem pyplot
+import matplotlib.pyplot as plt
+from pathlib import Path
 
 mlflow.set_tracking_uri("http://localhost:5000")
 client = mlflow.tracking.MlflowClient()
@@ -511,6 +621,7 @@ axes[2].set_xlabel('Czas treningu (s)')
 axes[2].set_title('Czas treningu per model')
 
 plt.tight_layout()
+Path("reports/figures").mkdir(parents=True, exist_ok=True)
 plt.savefig("reports/figures/experiment_comparison.png", dpi=100, bbox_inches='tight')
 print("\nWykres zapisany: reports/figures/experiment_comparison.png")
 
@@ -533,10 +644,19 @@ python scripts/compare_experiments.py
 | Problem | Przyczyna | Rozwiązanie |
 |---------|-----------|-------------|
 | `ConnectionRefusedError` przy logowaniu | Serwer MLflow nie jest uruchomiony | Uruchom `mlflow server` w osobnym terminalu |
+| `ImportError: cannot import name 'FallbackAsyncAdaptedQueuePool' from 'sqlalchemy.pool'` | MLflow 2.x z SQLAlchemy 2.1 | `pip install "sqlalchemy<2.1"` |
+| UI działa w VM, ale nie na hoście | Serwer słucha na `127.0.0.1` lub brak przekierowania portu | Startuj z `--host 0.0.0.0`; dodaj regułę NAT port forwarding 5000→5000 w VirtualBox; sprawdź `sudo ufw status` |
+| `[ERROR] Connection in use: ('0.0.0.0', 5000)` | Port zajęty (np. stary serwer w tle) | `ss -ltnp \| grep 5000`, zakończ proces (`kill <PID>`) lub użyj `--port 5001` |
+| `FutureWarning: ... transition_model_version_stage is deprecated` | Stages są przestarzałe od MLflow 2.9 | Ostrzeżenie można zignorować; docelowo użyj aliasów (Krok 3.2) |
+| `UserWarning: Hint: Inferred schema contains integer column(s)` przy `log_model` | Sygnatura wyznaczona z `input_example` z kolumnami `int` | Tylko informacja; w produkcji rzutuj cechy na `float`, jeśli mogą mieć braki |
+| `UndefinedMetricWarning` / `F1 = 0.0` | Model nie przewiduje klasy 1 przy progu 0.5 (niezbalansowane dane) | `zero_division=0`, `class_weight="balanced"` lub zmiana progu |
+| `ModuleNotFoundError: No module named 'src'` | Skrypt uruchomiony spoza katalogu `mlops-project` | Uruchamiaj z katalogu głównego projektu: `python scripts/run_experiments.py` |
+| `FileNotFoundError: data/processed/train.parquet` | Nie uruchomiono pipeline'u z Lab 1 | `dvc repro` (lub `dvc pull`) |
+| Brak okna z wykresem / błąd `TclError: no display` | Brak środowiska graficznego (SSH) | `matplotlib.use("Agg")` przed importem `pyplot` — wykresy zapisywane są do plików |
 | Eksperymenty nie pojawiają się w UI | Zły `tracking_uri` | Sprawdź `mlflow.get_tracking_uri()` — powinien wskazywać na serwer |
 | `MlflowException: RESOURCE_ALREADY_EXISTS` | Eksperyment o tej nazwie już istnieje | Użyj `mlflow.set_experiment()` zamiast `create_experiment()` |
 | Model Registry nie działa | Backend store to plik (nie baza danych) | Użyj `--backend-store-uri sqlite:///mlflow.db` przy starcie serwera |
-| Artefakty nie są widoczne w UI | Zła ścieżka `artifact-root` | Sprawdź `--default-artifact-root` przy starcie serwera |
+| Artefakty nie są widoczne w UI / `PermissionError` przy `log_artifact` | Klient zapisuje artefakty bezpośrednio na dysk (`--default-artifact-root` z lokalną ścieżką), a nie przez serwer | Startuj serwer z `--artifacts-destination ./mlartifacts` (proxy artefaktów) |
 
 > 💡 **Wskazówka:** Aby porównać eksperymenty w UI MLflow, zaznacz kilka runów checkboxem i kliknij „Compare". Zobaczysz wykresy porównawcze metryk i parametrów.
 
@@ -555,7 +675,7 @@ python scripts/compare_experiments.py
 ## Pytania kontrolne
 
 1. Jaka jest różnica między `mlflow.log_param` a `mlflow.log_metric`?
-2. Co to jest MLflow Model Registry i jakie stany może mieć model?
+2. Co to jest MLflow Model Registry i jakie stany może mieć model? Czym różnią się stages od aliasów?
 3. Dlaczego logujemy CV AUC zamiast tylko AUC na zbiorze testowym?
 4. Jak załadować model z MLflow Registry bez znajomości ścieżki do pliku?
 5. Co robi `mlflow.autolog()` i kiedy warto go używać?
@@ -566,4 +686,4 @@ W tym laboratorium:
 - ✅ Uruchomiłeś lokalny serwer MLflow z bazą SQLite
 - ✅ Zalogowałeś parametry, metryki, wykresy i modele
 - ✅ Porównałeś 6 różnych modeli w UI MLflow
-- ✅ Zarejestrowałeś model w Model Registry i zarządzałeś jego cyklem życia (Staging → Production)
+- ✅ Zarejestrowałeś model w Model Registry i zarządzałeś jego cyklem życia (Staging → Production oraz aliasy `@champion`)
