@@ -5,7 +5,19 @@ Po tym wykładzie student:
 - rozumie, czym są ML Pipelines i dlaczego są kluczowe w MLOps,
 - zna różnicę między pipeline'em danych a pipeline'em ML,
 - potrafi zbudować pipeline z użyciem Kubeflow Pipelines (KFP),
-- rozumie koncepcję DAG i orkiestracji zadań.
+- rozumie koncepcję DAG i orkiestracji zadań,
+- zna pojęcia: artefakt, lineage, metadata store, caching, quality gate, backfill,
+- potrafi świadomie wybrać orkiestrator i uniknąć typowych pułapek.
+
+> 💻 **Skrypty demonstracyjne** do tego wykładu znajdują się w `lectures/scripts/lecture_04/`:
+>
+> | Skrypt | Sekcja | Co pokazuje |
+> |--------|--------|-------------|
+> | `01_mini_orchestrator.py` | 2a | Własny mini-orkiestrator: DAG, sortowanie topologiczne, retry, caching |
+> | `02_quality_gate_pipeline.py` | 6a | Lokalny pipeline z artefaktami, lineage (`metadata.jsonl`) i bramką champion/challenger |
+> | `03_kfp_compile.py` | 4–6 | Kompilacja pipeline'u KFP v2 do YAML bez klastra i analiza wygenerowanego DAG |
+>
+> Wyniki zapisywane są w `lectures/scripts/lecture_04/outputs/`.
 
 ---
 
@@ -47,6 +59,41 @@ sequenceDiagram
     Note over P: Automatyczny, powtarzalny,<br/>audytowalny
 ```
 
+### Trzy rodzaje pipeline'ów w systemie ML
+
+W praktyce „pipeline ML” to nie jeden przepływ, lecz co najmniej trzy powiązane ze sobą:
+
+```
+┌──────────────────┐   cechy    ┌────────────────────┐   model    ┌────────────────────┐
+│  DATA / FEATURE  │──────────▶│ TRAINING PIPELINE  │──────────▶│ INFERENCE PIPELINE │
+│    PIPELINE      │ (Feature  │ (walidacja, trening│ (Model     │ (batch scoring lub │
+│ ETL, agregacje,  │  Store)   │  ewaluacja, rejestr│  Registry) │  online serving)   │
+│ walidacja danych │           │  bramka jakości)   │            │                    │
+└──────────────────┘           └────────────────────┘            └─────────┬──────────┘
+         ▲                                                                  │ logi predykcji,
+         └──────────────────── monitoring / retraining trigger ◀────────────┘ drift
+```
+
+| Aspekt | Pipeline danych | Pipeline treningowy | Pipeline inferencji |
+|--------|-----------------|---------------------|---------------------|
+| Wejście | Surowe dane (DB, logi, API) | Cechy + etykiety | Cechy nowych obserwacji |
+| Wyjście | Tabele cech, zbiory danych | Model + metryki + karta modelu | Predykcje |
+| Częstotliwość | Godzinowo / dziennie / streaming | Dziennie / tygodniowo / na trigger | Ciągle lub batch |
+| Główne ryzyko | Złe/niekompletne dane | Regresja jakości, leakage | Training–serving skew, latencja |
+| Typowe narzędzia | Airflow, dbt, Spark | KFP, Vertex AI, SageMaker, MLflow | FastAPI, KServe, Spark batch |
+
+> 💡 **Training–serving skew** – jeśli preprocessing jest zaimplementowany dwa razy (w pipeline'ie treningowym w pandas i w serwisie w Javie), wcześniej czy później się rozjedzie. Dobra praktyka: jeden kod transformacji (np. `sklearn.Pipeline` zapisany razem z modelem, Feature Store) używany w obu miejscach.
+
+### Poziomy dojrzałości automatyzacji (wg Google MLOps)
+
+| Poziom | Opis | Co jest zautomatyzowane |
+|--------|------|-------------------------|
+| **0 – proces ręczny** | Notebooki, ręczne przekazanie modelu do IT | Nic |
+| **1 – automatyzacja pipeline'u ML** | Pipeline treningowy uruchamiany automatycznie (harmonogram/trigger), continuous training | Trening, walidacja, rejestracja |
+| **2 – CI/CD pipeline'ów** | Kod pipeline'u jest testowany, budowany i wdrażany przez CI/CD | Także budowa i wdrażanie samego pipeline'u |
+
+Kluczowa zmiana mentalna przy przejściu z poziomu 0 na 1: **wdrażamy pipeline, a nie model**. Model jest artefaktem, który pipeline produkuje regularnie.
+
 ---
 
 ## 2. Anatomia ML Pipeline
@@ -73,6 +120,100 @@ graph LR
 | **Audytowalność** | Pełna historia uruchomień i artefaktów |
 | **Skalowalność** | Możliwość równoległego wykonania kroków |
 | **Odporność na błędy** | Retry, checkpointing, rollback |
+| **Reprodukowalność** | Wersjonowany kod, dane, obrazy i parametry pozwalają odtworzyć dowolny run |
+| **Obserwowalność** | Logi, metryki czasu/kosztu kroków, alerty |
+
+### Kluczowe pojęcia
+
+| Pojęcie | Definicja | Przykład |
+|---------|-----------|----------|
+| **Komponent (krok, task)** | Samodzielna jednostka pracy z jawnie zdefiniowanymi wejściami i wyjściami | `train_model(dataset) -> model, metrics` |
+| **Artefakt** | Plik/obiekt produkowany przez krok, przechowywany w Artifact Store | `dataset.parquet`, `model.joblib` |
+| **Parametr** | Mała wartość (liczba, string) przekazywana do kroku | `n_estimators=200` |
+| **Run** | Pojedyncze wykonanie pipeline'u z konkretnymi parametrami | `run_id=a80e822b` |
+| **Lineage** | Graf pochodzenia: z jakich danych i kodu powstał dany model | model v7 ← dataset hash `4710b7` ← kod `git:3fa2c1` |
+| **Metadata Store** | Baza z informacjami o runach, artefaktach i ich relacjach | ML Metadata (MLMD) w KFP/TFX |
+| **Quality gate** | Warunek, który musi spełnić model, by przejść dalej | AUC ≥ 0.85 i lepszy od championa |
+| **Backfill** | Uruchomienie pipeline'u dla historycznych przedziałów czasu | przeliczenie cech za ostatnie 90 dni |
+
+### Parametry vs artefakty – częsty błąd
+
+Orkiestratory rozróżniają małe **parametry** (przechowywane w bazie metadanych, np. JSON) od dużych **artefaktów** (pliki w S3/GCS). Przekazywanie DataFrame'u przez parametr (np. XCom w Airflow) to antywzorzec – baza metadanych nie jest magazynem danych. Przekazuj **ścieżkę/URI** do artefaktu, nie sam obiekt.
+
+```
+Krok A ──(parametr: "s3://bucket/run-42/dataset.parquet")──▶ Krok B   ✅
+Krok A ──(XCom: DataFrame 2 GB zserializowany do JSON)────▶ Krok B   ❌
+```
+
+---
+
+## 2a. DAG i orkiestracja – jak to działa od środka
+
+**DAG (Directed Acyclic Graph)** to graf skierowany bez cykli: wierzchołki to kroki, krawędzie to zależności („B potrzebuje wyniku A”). Brak cykli gwarantuje, że istnieje kolejność wykonania, w której każdy krok startuje dopiero po swoich zależnościach – tzw. **porządek topologiczny**.
+
+```mermaid
+graph LR
+    I[ingest] --> V[validate]
+    I --> S[stats]
+    V --> T[train]
+    I --> T
+    T --> E[evaluate]
+    I --> E
+    style S fill:#eef
+```
+
+Orkiestrator wykonuje w pętli:
+1. Wyznacza kroki, których wszystkie zależności są zakończone (in-degree = 0) → **fala** kroków, które można uruchomić równolegle (`validate` i `stats` powyżej).
+2. Dla każdego kroku liczy **klucz cache** = hash(kod/obraz + parametry + wejścia). Jeśli wynik istnieje – pomija wykonanie.
+3. Uruchamia krok (proces, kontener, pod K8s), przy błędzie przejściowym robi **retry z wykładniczym backoffem**.
+4. Zapisuje artefakty i metadane, aktualizuje stan, przechodzi do następnej fali.
+
+To wszystko implementuje w ~100 liniach skrypt `01_mini_orchestrator.py`:
+
+```bash
+python lectures/scripts/lecture_04/01_mini_orchestrator.py
+```
+
+```text
+▶ Uruchomienie 1 (n_estimators=50)
+  fala 0: ['ingest']
+    ⟳  ingest    błąd: timeout hurtowni danych – retry za 0.1s
+    ⟳  ingest    błąd: timeout hurtowni danych – retry za 0.2s
+    ✓  ingest    wykonany w 0.03s (próba 3)
+  fala 1: ['validate', 'stats']
+  ...
+▶ Uruchomienie 2 (n_estimators=150) – ingest/validate/stats z cache
+    💾 ingest    cache hit (7f0ddaefe6059093)
+    💾 validate  cache hit (196ceaa092a8ef4b)
+    ✓  train     wykonany w 0.35s (próba 1)
+▶ Próba z cyklem (train → ingest)
+  ❌ Graf zawiera cykl – to nie jest DAG!
+```
+
+### Retry – kiedy pomaga, a kiedy szkodzi
+
+| Typ błędu | Przykład | Retry? |
+|-----------|----------|--------|
+| Przejściowy (transient) | timeout sieci, chwilowy brak GPU, preempcja spot VM | ✅ tak, z backoffem |
+| Deterministyczny | błąd w kodzie, zła kolumna, assert walidacji | ❌ nie – retry tylko marnuje zasoby |
+| Z efektem ubocznym | wysłanie e-maila, zapis do bazy bez klucza idempotencji | ⚠️ tylko jeśli operacja jest idempotentna |
+
+### Idempotentność w praktyce
+
+```python
+# ❌ Nieidempotentne: każde uruchomienie dopisuje dane (duplikaty po retry)
+df.to_sql("features", engine, if_exists="append")
+
+# ✅ Idempotentne: partycja dla daty logicznej jest nadpisywana
+out = f"s3://features/date={run_date}/part.parquet"
+df.to_parquet(out)  # ponowne uruchomienie dla run_date daje ten sam stan
+
+# ❌ Zależność od "teraz" – wynik zależy od momentu uruchomienia
+start = datetime.now() - timedelta(days=30)
+
+# ✅ Zależność od daty logicznej runu (parametr pipeline'u / {{ ds }} w Airflow)
+start = run_date - timedelta(days=30)
+```
 
 ---
 
@@ -97,11 +238,50 @@ graph TB
     SDK --> API
 ```
 
+### Jak KFP wykonuje komponent
+
+Każdy komponent to osobny **kontener** uruchamiany jako pod Kubernetes. Kod funkcji Pythona z `@dsl.component` jest serializowany do specyfikacji YAML i przy starcie poda wstrzykiwany do obrazu `base_image` (dlatego **importy muszą być wewnątrz funkcji**!). Artefakty są przekazywane przez Artifact Store (S3/GCS/MinIO), nie przez pamięć.
+
+```mermaid
+sequenceDiagram
+    participant SDK as KFP SDK
+    participant API as KFP API
+    participant Argo as Argo/Driver
+    participant Pod as Pod komponentu
+    participant S3 as Artifact Store
+    participant MD as Metadata (MLMD)
+    SDK->>API: pipeline.yaml + parametry
+    API->>Argo: utwórz workflow
+    Argo->>MD: czy jest wynik w cache?
+    alt cache hit
+        MD-->>Argo: URI istniejących artefaktów
+    else cache miss
+        Argo->>Pod: start kontenera
+        Pod->>S3: pobierz artefakty wejściowe
+        Pod->>Pod: wykonaj funkcję
+        Pod->>S3: zapisz artefakty wyjściowe
+        Pod->>MD: zarejestruj wykonanie i lineage
+    end
+```
+
+### Typy komponentów KFP v2
+
+| Typ | Definicja | Kiedy używać |
+|-----|-----------|--------------|
+| **Lightweight Python** | `@dsl.component(base_image=..., packages_to_install=[...])` | Prototypy, proste kroki; pakiety instalowane przy każdym starcie (wolniej) |
+| **Containerized Python** | `@dsl.component(target_image=...)` + `kfp component build` | Produkcja: zależności zapieczone w obrazie, szybki start, powtarzalność |
+| **Container component** | `@dsl.container_component` zwracający `dsl.ContainerSpec` | Dowolny język/narzędzie (np. Spark, binarka C++) |
+| **Importer** | `dsl.importer(artifact_uri=...)` | Wprowadzenie istniejącego artefaktu (np. modelu bazowego) do lineage |
+
+> ⚠️ `packages_to_install` bez przypiętych wersji (`"pandas"`) narusza reprodukowalność – za pół roku zainstaluje się inna wersja. W produkcji przypinaj wersje lub buduj własny obraz.
+
 ### Instalacja KFP SDK
 
 ```bash
-pip install kfp==2.7.0
+pip install "kfp>=2.9,<3.0"   # zgodnie z requirements.txt kursu
 ```
+
+> 📝 Kompilacja pipeline'u do YAML **nie wymaga klastra** – wystarczy SDK. Pozwala to testować definicję pipeline'u w CI (patrz `03_kfp_compile.py`).
 
 ---
 
@@ -241,7 +421,12 @@ def evaluate_and_decide(
     df = pd.read_parquet(input_dataset.path)
     X = df.drop('target', axis=1)
     y = df['target']
-    _, X_test, _, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Ten sam podział co w train_model (łącznie ze stratify!) – inaczej
+    # zbiór testowy różniłby się od treningowego podziału i mógłby
+    # zawierać próbki widziane podczas treningu (data leakage).
+    _, X_test, _, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
     
     model = joblib.load(input_model.path)
     auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
@@ -250,6 +435,16 @@ def evaluate_and_decide(
     print(f"AUC: {auc:.4f}, próg: {auc_threshold}, decyzja: {decision}")
     return decision
 ```
+
+> 💡 **Lepszy wzorzec:** zamiast powtarzać `train_test_split` w kilku komponentach, wydziel osobny komponent `split_data`, który produkuje dwa artefakty (`train_dataset`, `test_dataset`). Wtedy podział jest wykonywany raz, jest widoczny w lineage i nie ma ryzyka rozjechania się logiki.
+
+### Dobre praktyki projektowania komponentów
+
+- **Jedna odpowiedzialność** – komponent robi jedną rzecz (łatwiej cache'ować i testować).
+- **Logika poza dekoratorem** – trzymaj właściwy kod w zwykłym module Pythona (`src/train.py`), a komponent KFP traktuj jako cienki wrapper. Wtedy testy jednostkowe nie wymagają KFP (patrz sekcja 9).
+- **Jawne typy wejść/wyjść** – `Input[Dataset]`, `Output[Model]`, typy parametrów; kompilator wykrywa niezgodności przed uruchomieniem.
+- **Determinizm** – `random_state`, przypięte wersje bibliotek, brak `datetime.now()` w logice.
+- **Rozmiar granulacji** – zbyt drobne kroki = narzut startu podów (często 10–60 s na krok); zbyt duże = brak cache i trudne debugowanie.
 
 ---
 
@@ -329,8 +524,52 @@ run = client.create_run_from_pipeline_func(
 )
 
 print(f"Pipeline uruchomiony: {run.run_id}")
-print(f"URL: {client.get_run(run.run_id).run.status}")
+# Uwaga: get_run zwraca obiekt runu – status to pole .state (KFP v2)
+print(f"Status: {client.get_run(run.run_id).state}")
+
+# Opcjonalnie: czekaj na zakończenie (np. w CI)
+result = client.wait_for_run_completion(run.run_id, timeout=3600)
+print(f"Stan końcowy: {result.state}")
 ```
+
+### Harmonogram (recurring run)
+
+```python
+client.create_recurring_run(
+    experiment_id=client.get_experiment(experiment_name="churn-experiments").experiment_id,
+    job_name="churn-nightly",
+    cron_expression="0 0 2 * * *",   # KFP używa 6-polowego crona (z sekundami)
+    pipeline_package_path="churn_pipeline.yaml",
+    params={"n_samples": 50000},
+    max_concurrency=1,               # nie uruchamiaj nowego, gdy poprzedni trwa
+)
+```
+
+### Kompilacja lokalna i inspekcja YAML
+
+Skrypt `03_kfp_compile.py` kompiluje pipeline z warunkiem `dsl.If/dsl.Else`, retry i limitami zasobów, a następnie czyta wygenerowany IR YAML:
+
+```bash
+python lectures/scripts/lecture_04/03_kfp_compile.py
+```
+
+```text
+Parametry pipeline'u:
+  auc_threshold  NUMBER_DOUBLE domyślnie=0.8
+  n_estimators   NUMBER_INTEGER domyślnie=100.0
+  n_samples      NUMBER_INTEGER domyślnie=10000.0
+
+Zadania w DAG (z zagnieżdżonymi grupami warunkowymi):
+  - condition-branches-1  deps=['train-model']
+    - condition-2  deps=[]  if: inputs.parameter_values['pipelinechannel--train-model-Output'] >= ...
+      - deploy-model  deps=[]
+    - condition-3  deps=[]  if: !(inputs.parameter_values['pipelinechannel--train-model-Output'] >= ...)
+      - send-notification  deps=[]
+  - ingest-data  deps=[]
+  - train-model  deps=['ingest-data']
+```
+
+Widać, że `dsl.If/Else` kompiluje się do grup warunkowych z wyrażeniem CEL, a zależności (`dependentTasks`) wynikają **automatycznie** z przepływu danych – `.after()` jest potrzebne tylko dla zależności bez przekazywania artefaktu (jak `validate_task` → `train_task` w przykładzie powyżej).
 
 ---
 
@@ -361,6 +600,81 @@ def pipeline_with_conditions(auc_threshold: float = 0.80):
         )
 ```
 
+> ⚠️ Uwaga na f-string z parametrem pipeline'u: `auc_threshold` wewnątrz funkcji `@dsl.pipeline` to **placeholder** (`PipelineParameterChannel`), a nie liczba – w f-stringu pojawi się jego tekstowa reprezentacja, a nie wartość. Wartość progu lepiej przekazać jako osobny parametr komponentu i sformatować wiadomość wewnątrz niego.
+
+### Inne konstrukcje sterujące KFP v2
+
+| Konstrukcja | Zastosowanie |
+|-------------|--------------|
+| `dsl.If / dsl.Elif / dsl.Else` | Rozgałęzienie na podstawie wyjścia kroku lub parametru |
+| `dsl.ParallelFor(items, parallelism=4)` | Fan-out: np. trening po jednym modelu na region lub siatka hiperparametrów |
+| `dsl.Collected(...)` | Fan-in: zebranie wyników z `ParallelFor` (np. wybór najlepszego modelu) |
+| `dsl.ExitHandler(exit_task)` | Krok sprzątający/powiadamiający uruchamiany zawsze, także po błędzie |
+| `task.set_retry(num_retries, backoff_duration)` | Retry dla kroków podatnych na błędy przejściowe |
+| `task.set_caching_options(False)` | Wyłączenie cache dla kroków z efektem ubocznym |
+
+```python
+@dsl.pipeline(name="per-region-training")
+def per_region(regions: list = ["PL", "DE", "CZ"]):
+    notify = send_notification(message="Pipeline zakończony")
+    with dsl.ExitHandler(notify):
+        with dsl.ParallelFor(regions, parallelism=2) as region:
+            data = ingest_region(region=region)
+            train_model(input_dataset=data.outputs["output_dataset"],
+                        n_estimators=100, max_depth=5)
+```
+
+---
+
+## 6a. Bramka jakości (quality gate) i champion/challenger
+
+Sam bezwzględny próg (`AUC ≥ 0.80`) to za mało: nowy model może przejść próg, a mimo to być **gorszy od obecnego modelu produkcyjnego**. Dojrzałe pipeline'y porównują kandydata (*challenger*) z modelem produkcyjnym (*champion*) na **tym samym** zbiorze testowym.
+
+```mermaid
+flowchart TD
+    T[Trening kandydata] --> E[Ewaluacja na wspólnym zbiorze testowym]
+    C[(Champion z Model Registry)] --> E
+    E --> G1{AUC ≥ próg<br/>bezwzględny?}
+    G1 -->|nie| R[REJECT + alert]
+    G1 -->|tak| G2{AUC_kand − AUC_champ<br/>≥ min_gain?}
+    G2 -->|nie| R
+    G2 -->|tak| G3{Brak regresji w<br/>F1 / fairness / latencji?}
+    G3 -->|nie| R
+    G3 -->|tak| P[PROMOTE → Staging → canary]
+```
+
+Typowe kryteria bramki:
+
+| Kryterium | Przykład | Po co |
+|-----------|----------|-------|
+| Próg bezwzględny | AUC ≥ 0.85 | Minimalna akceptowalna jakość biznesowa |
+| Względna poprawa | ΔAUC ≥ +0.005 vs champion | Unikanie „churnu modeli” bez realnego zysku |
+| Brak regresji w segmentach | F1 w każdym regionie ≥ F1 championa − 0.02 | Model lepszy średnio, ale gorszy dla grupy klientów |
+| Wymagania niefunkcjonalne | p95 latencji < 50 ms, rozmiar < 500 MB | Model musi dać się serwować |
+| Testy behawioralne | inwariancja na zmianę imienia, monotoniczność ceny | Sensowność predykcji |
+
+Skrypt `02_quality_gate_pipeline.py` implementuje lokalnie cały przepływ z zapisem lineage:
+
+```bash
+python lectures/scripts/lecture_04/02_quality_gate_pipeline.py
+python lectures/scripts/lecture_04/02_quality_gate_pipeline.py --min-gain 0.02   # → REJECT
+```
+
+```text
+  champion  (LogReg): {'auc': 0.9688, 'f1': 0.8621}
+  candidate (GBM)   : {'auc': 0.9766, 'f1': 0.8935}
+  🚦 decyzja: PROMOTE
+
+Lineage (.../outputs/quality_gate/metadata.jsonl):
+  ingest               {'output': 'dataset.parquet', 'output_hash': '4710b76cff', 'rows': 6000}
+  validate             {'input_hash': '4710b76cff', 'checks': {...}}
+  train_candidate      {'input_hash': '4710b76cff', 'output_hash': 'c4f7bc2dde'}
+  evaluate_candidate   {'model_hash': 'c4f7bc2dde', 'metrics': {'auc': 0.9766, 'f1': 0.8935}}
+  quality_gate         {'decision': 'promote', 'reasons': []}
+```
+
+Dzięki hashom można odpowiedzieć na pytanie audytora: *„na jakich dokładnie danych wytrenowano model, który podjął tę decyzję kredytową?”* – to właśnie **lineage**.
+
 ---
 
 ## 7. Apache Airflow dla ML
@@ -370,8 +684,7 @@ def pipeline_with_conditions(auc_threshold: float = 0.80):
 ```python
 from airflow import DAG
 from airflow.operators.python import PythonOperator, BranchPythonOperator
-from airflow.utils.dates import days_ago
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 # Definicja DAG
 default_args = {
@@ -387,8 +700,8 @@ with DAG(
     dag_id='ml_training_pipeline',
     default_args=default_args,
     description='Pipeline treningu modelu ML',
-    schedule_interval='0 2 * * *',  # codziennie o 2:00
-    start_date=days_ago(1),
+    schedule='0 2 * * *',  # codziennie o 2:00 (w Airflow < 2.4: schedule_interval)
+    start_date=datetime(2024, 1, 1),  # stała data; days_ago() jest przestarzałe
     catchup=False,
     tags=['ml', 'training', 'churn'],
 ) as dag:
@@ -445,9 +758,70 @@ with DAG(
         python_callable=check_model_quality,
     )
     
+    deploy = PythonOperator(
+        task_id='deploy_model',
+        python_callable=lambda: print("Wdrażanie modelu..."),
+    )
+    
+    notify_failure = PythonOperator(
+        task_id='notify_failure',
+        python_callable=lambda: print("Model odrzucony!"),
+    )
+    
     # Zależności między zadaniami
-    ingest >> validate >> train >> check_quality
+    ingest >> validate >> train >> check_quality >> [deploy, notify_failure]
 ```
+
+> 📝 `BranchPythonOperator` zwraca `task_id` gałęzi do wykonania – oba zadania docelowe muszą istnieć w DAG-u, a pominięta gałąź dostaje status `skipped`.
+
+### Data logiczna, catchup i backfill
+
+W Airflow każdy run ma **datę logiczną** (`{{ ds }}`, `logical_date`) – przedział danych, który przetwarza, a nie moment uruchomienia. Run dla `2024-01-15` startuje zwykle po zakończeniu tego dnia.
+
+```
+oś czasu:   |--- 01-13 ---|--- 01-14 ---|--- 01-15 ---|  teraz
+runy:            run(ds=01-13)  run(ds=01-14)  run(ds=01-15)
+catchup=True  → po włączeniu DAG-a Airflow uruchomi wszystkie zaległe runy od start_date
+catchup=False → tylko najnowszy
+backfill      → airflow dags backfill -s 2023-10-01 -e 2023-12-31 ml_training_pipeline
+```
+
+Backfill działa poprawnie **tylko dla idempotentnych zadań** parametryzowanych datą logiczną (sekcja 2a).
+
+### Nowoczesny styl: TaskFlow API
+
+```python
+from airflow.decorators import dag, task
+from datetime import datetime
+
+@dag(schedule="0 2 * * *", start_date=datetime(2024, 1, 1), catchup=False, tags=["ml"])
+def ml_training_taskflow():
+
+    @task(retries=3)
+    def ingest(ds=None) -> str:
+        return f"s3://ml-data/train/date={ds}/data.parquet"   # zwracamy URI, nie dane!
+
+    @task
+    def train(path: str) -> float:
+        print(f"Trening na {path}")
+        return 0.87
+
+    @task.branch
+    def gate(auc: float) -> str:
+        return "deploy" if auc >= 0.80 else "notify_failure"
+
+    @task
+    def deploy(): print("deploy")
+
+    @task
+    def notify_failure(): print("alert")
+
+    gate(train(ingest())) >> [deploy(), notify_failure()]
+
+ml_training_taskflow()
+```
+
+TaskFlow automatycznie tworzy zależności z przepływu wartości i przekazuje je przez XCom – stąd zasada: przez XCom tylko małe wartości (URI, metryki).
 
 ### Wizualizacja DAG Airflow
 
@@ -518,6 +892,27 @@ graph LR
 
 **Caching** oszczędza czas i koszty — jeśli dane wejściowe komponentu nie zmieniły się, wynik jest pobierany z cache.
 
+### Pułapki cache'owania
+
+Klucz cache w KFP obejmuje specyfikację komponentu (kod, obraz) oraz wartości wejść – **ale nie zawartość zewnętrznych źródeł**. Komponent `ingest_data(table="sales")` czytający z BigQuery zostanie zcache'owany, choć tabela dostała nowe wiersze!
+
+| Sytuacja | Problem | Rozwiązanie |
+|----------|---------|-------------|
+| Odczyt z zewnętrznej bazy/API | Stare dane z cache | Przekaż datę/snapshot jako parametr lub wyłącz cache dla kroku |
+| Krok z efektem ubocznym (deploy, e-mail) | Krok „pominięty”, efekt nie wystąpił | `task.set_caching_options(False)` |
+| Niedeterministyczny trening | Cache ukrywa wariancję wyników | Ustal seedy; świadomie wyłącz cache w eksperymentach |
+| `packages_to_install` bez wersji | Ten sam klucz, inne biblioteki | Przypnij wersje lub użyj własnego obrazu |
+
+### Porównanie zarządzanych usług pipeline'ów w chmurze
+
+| Cecha | Vertex AI Pipelines | SageMaker Pipelines | Azure ML Pipelines |
+|-------|---------------------|---------------------|--------------------|
+| Format definicji | KFP v2 / TFX | SageMaker Python SDK | Azure ML SDK v2 / YAML |
+| Serverless | Tak (płacisz za kroki) | Tak | Częściowo (compute clusters) |
+| Cache | Tak | Tak (`CacheConfig`) | Tak (reuse) |
+| Model Registry | Vertex Model Registry | SageMaker Model Registry | Azure ML Registry |
+| Przenośność | Wysoka (KFP działa też on-prem) | Niska (vendor lock-in) | Średnia |
+
 ---
 
 ## 9. Testowanie pipeline'ów
@@ -585,6 +980,41 @@ class TestPipelineComponents:
 # pytest test_pipeline_components.py -v
 ```
 
+> 📝 Powyższe testy zakładają wzorzec „logika poza dekoratorem”: moduł `lecture_04_components` zawiera zwykłe funkcje (`ingest_data_fn`, `validate_data_fn`, `train_model_fn`), a komponenty KFP tylko je wywołują.
+
+### Piramida testów pipeline'u ML
+
+```
+                 ▲  mało, wolne, drogie
+                ╱ ╲      E2E: pełny run na stagingu (Vertex/KFP), mały zbiór danych
+               ╱───╲
+              ╱     ╲    Integracyjne: kompilacja pipeline'u, run lokalny
+             ╱       ╲   (np. kfp.local / DockerRunner), kontrakty artefaktów
+            ╱─────────╲
+           ╱           ╲ Jednostkowe: funkcje transformacji, walidacji, metryk;
+          ╱             ╲ testy danych (schemat, zakresy) i modelu (próg jakości)
+         ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ dużo, szybkie, tanie
+```
+
+### Test kompilacji pipeline'u w CI
+
+```python
+# tests/test_pipeline_compiles.py
+import yaml
+from kfp import compiler
+from pipelines.churn import churn_pipeline
+
+def test_pipeline_compiles(tmp_path):
+    path = tmp_path / "p.yaml"
+    compiler.Compiler().compile(churn_pipeline, str(path))
+    spec = yaml.safe_load(path.read_text())
+    tasks = spec["root"]["dag"]["tasks"]
+    assert "train-model" in tasks
+    assert "ingest-data" in tasks["train-model"]["dependentTasks"]
+```
+
+Taki test wyłapuje błędy typów wejść/wyjść i literówki w nazwach artefaktów w sekundę – zamiast po 20 minutach na klastrze.
+
 ---
 
 ## 10. Typowe pułapki w budowaniu pipeline'ów ML
@@ -601,12 +1031,50 @@ class TestPipelineComponents:
 > ⚠️ **Pułapka 4: Brak obsługi błędów**
 > Pipeline bez retry, timeoutów i alertów. W produkcji dane mogą być niedostępne, API może nie odpowiadać, a trening może się zawiesić. Zawsze dodawaj obsługę błędów i powiadomienia.
 
+> ⚠️ **Pułapka 5: Przekazywanie dużych danych przez metadane**
+> DataFrame w XCom/parametrze zapycha bazę orkiestratora i spowalnia UI. Przekazuj URI artefaktów.
+
+> ⚠️ **Pułapka 6: Różny preprocessing w treningu i serwowaniu**
+> Training–serving skew – model działa świetnie w ewaluacji i źle w produkcji. Zapisuj preprocessing razem z modelem (`sklearn.Pipeline`) lub korzystaj z Feature Store.
+
+> ⚠️ **Pułapka 7: Ewaluacja na innym podziale niż zakładany**
+> Każdy komponent sam dzieli dane (`train_test_split`) z innymi argumentami – zbiór testowy przestaje być rozłączny z treningowym. Dziel dane raz, w osobnym kroku.
+
+> ⚠️ **Pułapka 8: Brak bramki względem championa**
+> Automatyczny retraining z samym progiem bezwzględnym może wdrożyć model gorszy od obecnego. Porównuj z modelem produkcyjnym (sekcja 6a).
+
+### Checklist gotowości pipeline'u do produkcji
+
+- [ ] Każdy krok ma jawne wejścia/wyjścia i jest idempotentny
+- [ ] Wersje bibliotek przypięte / własny obraz Dockera
+- [ ] Parametry w konfiguracji, nie w kodzie
+- [ ] Walidacja danych przed treningiem (schemat, zakresy, liczność)
+- [ ] Bramka jakości: próg bezwzględny + porównanie z championem
+- [ ] Retry tylko dla błędów przejściowych, timeouty dla każdego kroku
+- [ ] Alerty przy błędzie (`ExitHandler`, `on_failure_callback`)
+- [ ] Lineage: model → dane → commit kodu
+- [ ] Test kompilacji pipeline'u w CI
+
+### Case Study: Uber — Michelangelo
+
+**Uber** zbudował platformę **Michelangelo**, która standaryzuje cały cykl: zarządzanie cechami (Palette Feature Store), trening, ewaluację, wdrożenie i monitoring predykcji. Kluczowe lekcje:
+- Ten sam kod cech używany offline (trening, Spark) i online (serwowanie) – eliminacja training–serving skew.
+- Pipeline'y są szablonami – zespół produktowy konfiguruje, a nie programuje infrastrukturę.
+- Każdy model w produkcji ma zapisane pochodzenie (dane, konfigurację, metryki), co umożliwia porównania i rollback.
+
+### Case Study: Spotify — przejście na Kubeflow
+
+**Spotify** opisywał migrację z własnych, rozproszonych skryptów do platformy opartej o **Kubeflow Pipelines** (wewnętrznie „ML Home” / „Paved Road”). Efektem było ujednolicenie sposobu trenowania i wdrażania modeli przez wiele zespołów oraz znaczne skrócenie czasu od eksperymentu do produkcji – dzięki gotowym, współdzielonym komponentom zamiast każdorazowego pisania infrastruktury od zera.
+
 ### Case Study: Airbnb — Zipline ML Pipeline
 
 **Airbnb** zbudował wewnętrzną platformę **Zipline** do zarządzania pipeline'ami ML:
 - Obsługuje ponad 100 modeli ML w produkcji (dynamiczne ceny, wykrywanie fraudów, ranking wyników wyszukiwania).
 - Kluczowa innowacja: **automatyczne backfilling** — gdy dodajesz nową cechę, Zipline automatycznie oblicza ją dla danych historycznych.
 - Pipeline'y są definiowane deklaratywnie (YAML), co ułatwia audyt i reprodukowalność.
+- Gwarantuje spójność cech offline/online i **poprawność punktową w czasie** (point-in-time correctness) – cecha dla przykładu treningowego liczona jest wyłącznie z danych dostępnych w chwili zdarzenia, co zapobiega wyciekowi danych z przyszłości.
+
+> 📝 Zipline to w istocie framework **pipeline'ów cech** (część platformy ML Airbnb *Bighead*), a nie ogólny orkiestrator – dobrze ilustruje, że pipeline danych/cech jest równie ważny jak pipeline treningowy.
 
 ### Porównanie orkiestratorów ML
 
@@ -619,6 +1087,44 @@ class TestPipelineComponents:
 | Caching | Wbudowany | Brak | Wbudowany | Wbudowany |
 | Najlepszy dla | Duże zespoły ML, K8s | Istniejące zespoły DE | Małe/średnie zespoły | Projekty data-centric |
 
+> 📝 Uwaga do wiersza „Caching”: Airflow nie ma cache'owania wyników zadań na wzór KFP – „pomijanie” zadań uzyskuje się ręcznie (sensory, sprawdzanie istnienia partycji, `ShortCircuitOperator`).
+
+### Jak wybrać? Drzewo decyzyjne
+
+```mermaid
+flowchart TD
+    A{Masz/chcesz Kubernetes<br/>i dedykowany zespół platformowy?} -->|tak| B{Głównie ML?}
+    B -->|tak| KFP[Kubeflow Pipelines<br/>lub Vertex AI]
+    B -->|nie, też ETL| AF1[Airflow + KubernetesPodOperator]
+    A -->|nie| C{Firma już używa Airflow<br/>do ETL?}
+    C -->|tak| AF2[Airflow – rozszerz o zadania ML]
+    C -->|nie| D{Myślisz w kategoriach<br/>zasobów danych / assetów?}
+    D -->|tak| DG[Dagster]
+    D -->|nie| PF[Prefect / zarządzana usługa chmurowa]
+```
+
+### Ten sam krok w różnych orkiestratorach
+
+```python
+# Prefect
+from prefect import flow, task
+
+@task(retries=3, cache_key_fn=lambda ctx, p: str(p))
+def train(n_estimators: int) -> float: ...
+
+@flow
+def ml_flow(): train(100)
+
+# Dagster – myślenie w kategoriach "assetów" (tabel/modeli), a nie zadań
+from dagster import asset
+
+@asset
+def training_data(): ...
+
+@asset
+def churn_model(training_data): ...   # zależność wynika z nazwy argumentu
+```
+
 ---
 
 ## Pytania kontrolne i do dyskusji
@@ -630,6 +1136,9 @@ class TestPipelineComponents:
 5. Porównaj Kubeflow Pipelines i Apache Airflow — kiedy użyjesz każdego z nich?
 6. Jak testować komponenty pipeline'u? Podaj przykład testu jednostkowego.
 7. **Dyskusja:** Czy warto budować własny pipeline od zera, czy lepiej użyć gotowego orkiestratora? Jakie są trade-offy?
+8. Dlaczego przez XCom/parametry nie należy przekazywać dużych danych? Co przekazywać zamiast nich?
+9. Czym jest bramka champion/challenger i dlaczego sam próg bezwzględny nie wystarcza?
+10. Kiedy retry jest szkodliwy? Podaj przykład.
 
 
 ### Proponowane odpowiedzi
@@ -641,6 +1150,9 @@ class TestPipelineComponents:
 5. KFP wybieram dla środowisk Kubernetes i pipeline’ów ML-first; Airflow dla dojrzałych zespołów data engineering i ogólnych workflow ETL. KFP ma silniejsze natywne wsparcie artefaktów ML, Airflow ma ogromny ekosystem operatorów.
 6. Komponenty testujemy jak zwykłe funkcje: wejście/wyjście, walidacja błędów, zakres metryk. Przykład: test sprawdza, że trening zapisuje model i zwraca AUC/F1 w poprawnych przedziałach.
 7. Zwykle lepiej zacząć od gotowego orkiestratora, bo skraca czas i zmniejsza ryzyko operacyjne. Własne rozwiązanie daje pełną kontrolę, ale zwiększa koszt utrzymania, ryzyko błędów i dług techniczny.
+8. Baza metadanych orkiestratora nie jest magazynem danych – duże obiekty spowalniają system, mają limity rozmiaru i nie są wersjonowane jak artefakty. Przekazujemy URI artefaktu w Artifact Store (S3/GCS).
+9. Kandydat jest porównywany z modelem produkcyjnym na tym samym zbiorze testowym; promujemy go tylko przy realnej poprawie i braku regresji. Sam próg może wdrożyć model, który go spełnia, ale jest gorszy od obecnego.
+10. Przy błędach deterministycznych (bug, nieudana walidacja) retry tylko marnuje zasoby i opóźnia alert; przy nieidempotentnych efektach ubocznych (np. `append` do bazy) retry tworzy duplikaty.
 
 
 ---
@@ -654,6 +1166,9 @@ class TestPipelineComponents:
 - **Warunkowe wykonanie** pozwala na automatyczne decyzje o wdrożeniu.
 - Testuj komponenty pipeline'u jak zwykły kod Python.
 - Wybór orkiestratora zależy od kontekstu: KFP dla Kubernetes, Airflow dla istniejących zespołów DE, Prefect/Dagster dla mniejszych zespołów.
+- Orkiestrator to w istocie: DAG + sortowanie topologiczne + cache + retry + metadane (`01_mini_orchestrator.py`).
+- Dojrzały pipeline kończy się **bramką jakości champion/challenger** i zapisuje **lineage** (`02_quality_gate_pipeline.py`).
+- Definicję pipeline'u KFP można kompilować i testować lokalnie w CI (`03_kfp_compile.py`).
 
 ## Literatura i zasoby
 
@@ -664,3 +1179,6 @@ class TestPipelineComponents:
 - [Prefect Documentation](https://docs.prefect.io/)
 - [Dagster Documentation](https://docs.dagster.io/)
 - [Airbnb Zipline – ML Feature Pipeline](https://medium.com/airbnb-engineering)
+- [Google Cloud – MLOps: Continuous delivery and automation pipelines in ML](https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning)
+- [Uber Engineering – Meet Michelangelo](https://www.uber.com/blog/michelangelo-machine-learning-platform/)
+- [Airflow – TaskFlow API](https://airflow.apache.org/docs/apache-airflow/stable/tutorial/taskflow.html)

@@ -1,4 +1,4 @@
-# Skrypty demonstracyjne do wykładów 1–3
+# Skrypty demonstracyjne do wykładów 1–8
 
 Skrypty do uruchamiania na żywo w trakcie wykładów. Każdy odpowiada jednej sekcji wykładu
 i działa samodzielnie na danych syntetycznych, więc nie trzeba pobierać żadnych zbiorów danych.
@@ -78,6 +78,47 @@ export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
 ```
 
 Reset przed kolejnym wykładem: `rm -rf mlruns`.
+
+## Wykład 4 – ML Pipelines
+
+| Skrypt | Co pokazuje |
+|---|---|
+| `lecture_04/01_mini_orchestrator.py` | Mini-orkiestrator: DAG, wykrywanie cykli, równoległe „fale”, retry z backoffem, cache po hashu |
+| `lecture_04/02_quality_gate_pipeline.py` | Lokalny pipeline ingest → validate → train → evaluate → quality gate z logiem lineage |
+| `lecture_04/03_kfp_compile.py` | Kompilacja pipeline'u KFP v2 (`dsl.If/Else`, retry, zasoby) do YAML bez klastra |
+
+## Wykład 5 – Model serving
+
+| Skrypt | Co pokazuje |
+|---|---|
+| `lecture_05/01_fastapi_service.py` | Serwis FastAPI testowany przez `TestClient` (200 / 422 / 400) |
+| `lecture_05/02_latency_batching.py` | p50/p95/p99 i przepustowość vs rozmiar batcha, wpływ ogona na p99 |
+| `lecture_05/03_deployment_strategies.py` | Symulacja shadow i canary ze sticky routingiem i auto-rollbackiem |
+| `lecture_05/04_batch_scoring.py` | Idempotentny batch scoring do partycji Parquet |
+
+## Wykład 6 – Monitoring
+
+| Skrypt | Co pokazuje |
+|---|---|
+| `lecture_06/01_drift_metrics.py` | PSI, KL, JS, Wasserstein, KS dla rosnącego dryftu; pułapka p-value przy dużym n |
+| `lecture_06/02_concept_drift_stream.py` | 12 tygodni: data drift vs concept drift, champion/challenger |
+| `lecture_06/03_prometheus_metrics.py [--serve]` | Metryki Counter/Histogram/Gauge, format `/metrics`, percentyle z bucketów |
+
+## Wykład 7 – CI/CD dla ML
+
+| Skrypt | Co pokazuje |
+|---|---|
+| `lecture_07/01_ml_unit_tests.py` | Zestaw pytest: unit, kontrakt, determinizm, testy behawioralne INV/DIR/MFT |
+| `lecture_07/02_quality_gate.py [--bad]` | Quality gate champion vs challenger (kod wyjścia 1 przy porażce) |
+| `lecture_07/03_ci_pipeline_sim.py [--break-data]` | Symulacja pipeline'u CI fail-fast |
+
+## Wykład 8 – Skalowalność i bezpieczeństwo
+
+| Skrypt | Co pokazuje |
+|---|---|
+| `lecture_08/01_batching_latency_throughput.py` | Latencja vs przepustowość, symulacja dynamic batchingu |
+| `lecture_08/02_adversarial_and_validation.py` | Atak FGSM, walidacja wejścia (pydantic v2), ekstrakcja modelu |
+| `lecture_08/03_pii_masking.py` | Maskowanie PII, pseudonimizacja HMAC, k-anonimowość |
 
 ## Wskazówki dla prowadzącego
 

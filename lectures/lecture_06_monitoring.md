@@ -5,7 +5,21 @@ Po tym wykładzie student:
 - rozumie, dlaczego monitoring jest kluczowy w systemach ML,
 - zna rodzaje dryfu danych i metody ich wykrywania,
 - potrafi zbudować system monitoringu z użyciem Evidently AI i Prometheus,
-- wie, jak skonfigurować alerty i automatyczny retraining.
+- wie, jak skonfigurować alerty i automatyczny retraining,
+- rozumie formalne podstawy miar dryfu (PSI, KS, KL, JS, Wasserstein) i ich ograniczenia,
+- potrafi zaprojektować strategię monitoringu przy opóźnionych etykietach.
+
+## Skrypty do wykładu
+
+Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_06/`. Pełną instrukcję znajdziesz w [`lectures/scripts/README.md`](scripts/README.md).
+
+| Kiedy (sekcja) | Skrypt | Cel demonstracji |
+|---|---|---|
+| 3. Wykrywanie dryfu | `01_drift_metrics.py` | PSI, KS, KL, JS i Wasserstein dla rosnącego dryfu + pułapka dużych próbek |
+| 1. i 6. Rodzaje dryfu / retraining | `02_concept_drift_stream.py` | data drift vs concept drift na 12-tygodniowym strumieniu, quality gate |
+| 5. Prometheus | `03_prometheus_metrics.py [--serve]` | instrumentacja, format `/metrics`, kwantyle z bucketów histogramu |
+
+**Jak:** z katalogu głównego repozytorium uruchom `python lectures/scripts/lecture_06/<skrypt>`. Skrypt 03 zapisuje wynik do `lectures/scripts/lecture_06/outputs/`.
 
 ---
 
@@ -35,6 +49,59 @@ graph TD
 | **Label Drift** | P(Y) się zmienia | Monitoring rozkładu etykiet |
 | **Prediction Drift** | P(Ŷ) się zmienia | Monitoring rozkładu predykcji |
 
+### Formalnie: rozkład łączny i jego rozkłady
+
+Model uczy się przybliżenia rozkładu łącznego `P(X, Y)`, który można rozłożyć na dwa sposoby:
+
+```
+P(X, Y) = P(Y | X) · P(X)      ← widok „przyczynowy" (cechy → etykieta)
+P(X, Y) = P(X | Y) · P(Y)      ← widok „generatywny" (etykieta → cechy)
+```
+
+Z tego wynikają klasyczne nazwy z literatury (Quiñonero-Candela i in., *Dataset Shift in ML*):
+
+| Nazwa w literaturze | Co się zmienia | Co stałe | Przykład |
+|---|---|---|---|
+| **Covariate shift** (= data drift) | `P(X)` | `P(Y\|X)` | nowy kanał marketingowy przyciąga młodszych klientów |
+| **Prior / label shift** | `P(Y)` | `P(X\|Y)` | odsetek fraudów rośnie w okresie świątecznym |
+| **Concept drift** | `P(Y\|X)` | (dowolne) | po zmianie regulaminu ci sami klienci rezygnują częściej |
+| **Upstream / schema drift** | sposób liczenia cech | – | ETL zaczyna zwracać dochód w tys. zł zamiast w zł |
+
+> 💡 Covariate shift **nie zawsze** psuje model: jeśli model dobrze przybliża `P(Y|X)` także w nowym obszarze przestrzeni cech, jakość pozostaje dobra (zob. demo `02_concept_drift_stream.py`, tygodnie 5–8: PSI > 0.9, a AUC bez zmian). Concept drift **zawsze** psuje model, ale jest **niewidoczny** dla testów na samych cechach (tygodnie 9–12: PSI ≈ 0, AUC spada z 0.85 do 0.52).
+
+### Dynamika dryfu w czasie
+
+```
+nagły (sudden)        stopniowy (gradual)    przyrostowy (incremental)   cykliczny (recurring)
+koncept                koncept                 koncept                     koncept
+ B ┤      ┌─────       B ┤    ┌┐ ┌┐┌───        B ┤          ╱───          B ┤  ┌──┐    ┌──┐
+   │      │              │    ││ │││             │        ╱                 │  │  │    │  │
+ A ┤──────┘            A ┤────┘└─┘└┘           A ┤──────╱                 A ┤──┘  └────┘  └──
+   └──────────▶ t        └──────────▶ t          └──────────▶ t              └──────────────▶ t
+ np. COVID-19,          np. migracja klientów   np. inflacja, starzenie     np. sezonowość,
+ zmiana API partnera    do nowej aplikacji      się sprzętu/sensorów        weekendy, święta
+```
+
+| Typ | Jak wykryć | Typowa reakcja |
+|---|---|---|
+| Nagły | alert progowy na krótkim oknie (1h–1d) | rollback / szybki retraining / reguły awaryjne |
+| Stopniowy | trend metryk na oknie przesuwnym | zaplanowany retraining |
+| Przyrostowy | porównanie z referencją z treningu (nie z „wczoraj"!) | retraining okresowy, uczenie online |
+| Cykliczny | porównanie z analogicznym okresem (rok/tydzień temu) | cechy kalendarzowe, osobne modele/referencje |
+
+### Problem opóźnionych etykiet (label delay)
+
+W większości systemów prawdziwa etykieta pojawia się z opóźnieniem: churn – po 30 dniach, fraud – po chargebacku (do 90 dni), default kredytowy – po miesiącach. Dlatego monitoring stosuje **hierarchię sygnałów**:
+
+```mermaid
+graph LR
+    A[Sygnały natychmiastowe<br/>latencja, błędy, schemat,<br/>braki danych] --> B[Sygnały szybkie<br/>drift cech,<br/>drift predykcji]
+    B --> C[Sygnały pośrednie<br/>proxy: CTR, konwersja,<br/>reklamacje]
+    C --> D[Sygnały opóźnione<br/>AUC, F1, kalibracja<br/>na prawdziwych etykietach]
+```
+
+Im dalej w prawo, tym sygnał jest **pewniejszy**, ale **późniejszy**. Drift cech i predykcji to „wczesne ostrzeżenie", a nie dowód degradacji. Narzędzia typu NannyML próbują estymować jakość bez etykiet (metoda CBPE – *Confidence-Based Performance Estimation*), zakładając dobrą kalibrację modelu i brak concept driftu.
+
 ---
 
 ## 2. Metryki monitoringu
@@ -63,9 +130,109 @@ graph LR
     end
 ```
 
+### Piramida monitoringu ML
+
+```
+                  ┌─────────────────────┐
+                  │  KPI biznesowe       │  przychód, churn, straty na fraudach
+                ┌─┴─────────────────────┴─┐
+                │  Jakość modelu           │  AUC, F1, MAE, kalibracja (opóźnione)
+              ┌─┴─────────────────────────┴─┐
+              │  Predykcje                   │  rozkład ŷ, odsetek klas, pewność
+            ┌─┴─────────────────────────────┴─┐
+            │  Dane wejściowe                  │  drift, braki, zakresy, schemat
+          ┌─┴─────────────────────────────────┴─┐
+          │  Infrastruktura / serwis             │  latencja, RPS, błędy, CPU/GPU, RAM
+          └─────────────────────────────────────┘
+```
+
+Dolne warstwy są tanie i natychmiastowe, górne – kosztowne i opóźnione, ale to one mówią, czy model **przynosi wartość**.
+
+| Warstwa | Przykładowa metryka | Częstotliwość | Typ metryki Prometheus | Kto reaguje |
+|---|---|---|---|---|
+| Infrastruktura | p95 latencji, 5xx | sekundy | Histogram, Counter | SRE / on-call |
+| Dane | PSI per cecha, % nulli | minuty–godziny (batch) | Gauge | Data Engineer |
+| Predykcje | średnie ŷ, % klasy „high" | minuty | Counter, Gauge | ML Engineer |
+| Jakość | AUC, precision@k | dni–tygodnie | Gauge | Data Scientist |
+| Biznes | koszt fałszywych alarmów | tygodnie | dashboard BI | Product Owner |
+
+> 💡 **Golden signals** (Google SRE): latency, traffic, errors, saturation. Dla ML dodajemy „piąty sygnał": **jakość/rozkład predykcji**.
+
 ---
 
 ## 3. Wykrywanie dryfu – metody statystyczne
+
+### Teoria: miary odległości między rozkładami
+
+Niech `p` – rozkład referencyjny (trening), `q` – rozkład bieżący (produkcja). Dla miar binowanych `p_i`, `q_i` to odsetki obserwacji w i-tym binie (biny wyznaczamy **kwantylami referencji**, więc `p_i ≈ 1/n_bins`).
+
+| Miara | Wzór | Zakres | Symetryczna | Uwagi |
+|---|---|---|---|---|
+| **KS** | `D = sup_x \|F_p(x) − F_q(x)\|` | [0, 1] | tak | test nieparametryczny, daje p-value; tylko cechy ciągłe 1D |
+| **PSI** | `Σ (q_i − p_i) · ln(q_i / p_i)` | [0, ∞) | tak | standard w bankowości (scoring); = `KL(p‖q) + KL(q‖p)` |
+| **KL** | `Σ q_i · ln(q_i / p_i)` | [0, ∞) | nie | nieskończona, gdy `p_i = 0` → wymaga wygładzania (ε) |
+| **Jensen–Shannon** | `√(½KL(p‖m) + ½KL(q‖m))`, `m = ½(p+q)` | [0, 1] (log₂) | tak | ograniczona, stabilna; domyślna w Evidently dla dużych zbiorów |
+| **Wasserstein (EMD)** | `∫ \|F_p(x) − F_q(x)\| dx` | [0, ∞) w jednostkach cechy | tak | „koszt przeniesienia masy"; normalizuj przez σ referencji |
+| **Chi²** | `Σ (O_i − E_i)² / E_i` | [0, ∞) | nie | dla cech **kategorycznych**, daje p-value |
+
+Skąd progi PSI 0.1 / 0.2? To reguła kciuka z praktyki ryzyka kredytowego. Dla małego przesunięcia średniej o `δ` odchyleń standardowych w rozkładzie normalnym `PSI ≈ δ²`, czyli:
+
+```
+PSI ≈ 0.01  ↔ przesunięcie o 0.1σ    (szum)
+PSI ≈ 0.10  ↔ przesunięcie o ~0.3σ   (warto obserwować)
+PSI ≈ 0.25  ↔ przesunięcie o ~0.5σ   (istotna zmiana)
+```
+
+Demo `01_drift_metrics.py` pokazuje to empirycznie: przesunięcie o 0.5σ (μ +5) daje PSI ≈ 0.31, a o 0.1σ – PSI ≈ 0.015.
+
+### Test statystyczny vs miara wielkości efektu
+
+```
+          p-value testu KS                         PSI / JS / Wasserstein
+   1.0 ┤●                                    0.1 ┤
+       │  ●                                      │●
+   0.5 ┤                                         │  ●
+       │     ●                                   │     ●──────●───────●
+   0.0 ┤        ●──────●───────●             0.0 ┤
+       └──────────────────────────▶ n            └──────────────────────────▶ n
+         ta sama, nieistotna zmiana 0.05σ          ta sama zmiana – wartość stała
+```
+
+- **p-value** odpowiada na pytanie „czy rozkłady są *dokładnie* takie same?" – przy dużym ruchu (n = 100 000) odpowiedź prawie zawsze brzmi „nie" (demo: p = 6e-29 dla zmiany o 0.05σ). To źródło **alert fatigue**.
+- **Effect size** (PSI, JS, Wasserstein/σ) odpowiada na pytanie „*jak bardzo* się różnią?" – to powinno sterować alertami.
+- Przy małych próbkach (n = 200) **wszystkie** miary są zaszumione (PSI ≈ 0.065 bez realnego dryfu) – ustal minimalny rozmiar okna (np. ≥ 1 000 obserwacji / ≥ 50 na bin).
+- Testując 200 cech z `α = 0.05`, średnio **10 fałszywych alarmów** na każde sprawdzenie. Stosuj korektę Bonferroniego (`α/k`) lub Benjamini–Hochberga, albo monitoruj tylko top-k najważniejszych cech.
+
+| Sytuacja | Rekomendowana metoda |
+|---|---|
+| Cecha numeryczna, n < 1 000 | KS (p-value) |
+| Cecha numeryczna, n > 1 000 | Wasserstein/σ lub JS, ewentualnie PSI |
+| Cecha kategoryczna | Chi² (małe n), JS lub PSI na kategoriach (duże n) |
+| Scoring kredytowy / regulacje | PSI (wymagany w raportach, np. pod nadzorem KNF/EBA) |
+| Wiele cech jednocześnie | drift klasyfikatora (*domain classifier*), PCA + błąd rekonstrukcji |
+| Embeddingi (NLP, obrazy) | MMD, odległość cosinusowa średnich embeddingów, domain classifier |
+
+#### Dryf wielowymiarowy – domain classifier
+
+Testy 1D nie wykryją zmiany **korelacji** między cechami (każda cecha osobno ma ten sam rozkład). Prosta i skuteczna technika: wytrenuj klasyfikator odróżniający „referencję" (y=0) od „produkcji" (y=1).
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score
+
+def domain_classifier_drift(reference: pd.DataFrame, current: pd.DataFrame) -> float:
+    """Zwraca AUC klasyfikatora ref-vs-cur. AUC≈0.5 → brak dryfu, >0.6 → dryf."""
+    X = pd.concat([reference, current], ignore_index=True)
+    y = np.r_[np.zeros(len(reference)), np.ones(len(current))]
+    clf = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+    return cross_val_score(clf, X, y, cv=5, scoring="roc_auc").mean()
+    # Bonus: clf.feature_importances_ wskazuje, KTÓRE cechy najbardziej dryfują
+```
+
+> ▶️ **Demo na żywo:** `python lectures/scripts/lecture_06/01_drift_metrics.py`  
+> Pokaż tabelę rosnącego dryfu, a potem sekcję „pułapka dużych próbek" – zapytaj studentów, którą metrykę podpięliby pod alert.
 
 ### Test Kolmogorova-Smirnova (KS Test)
 
@@ -104,9 +271,11 @@ def ks_drift_test(
             "none"
         )
     }
+```
 
 ### Population Stability Index (PSI)
 
+```python
 def calculate_psi(
     reference: np.ndarray,
     current: np.ndarray,
@@ -171,7 +340,7 @@ import pandas as pd
 import numpy as np
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable
+from typing import Callable, Optional
 
 @dataclass
 class DriftReport:
@@ -286,6 +455,26 @@ print(report.summary())
 ## 4. Evidently AI – biblioteka do monitoringu ML
 
 **Evidently AI** to open-source'owa biblioteka do monitoringu i testowania modeli ML.
+
+> ⚠️ **Wersje API.** Poniższy kod używa „klasycznego" API Evidently (0.4.x – 0.6.x: `ColumnMapping`, `Report`, `TestSuite`, `metric_preset`). Od wersji **0.7** API zostało przebudowane (`from evidently import Report, Dataset, DataDefinition`, `from evidently.presets import DataDriftPreset`, a Test Suite zastąpiono warunkami `tests=` w metrykach). Przypnij wersję w `requirements.txt` i sprawdź dokumentację swojej wersji.
+
+**Jak Evidently wybiera test dryfu (domyślnie, per kolumna):**
+
+| Typ kolumny | n ≤ 1000 | n > 1000 |
+|---|---|---|
+| numeryczna (> 5 unikalnych wartości) | KS (p-value < 0.05) | Wasserstein znormalizowany (> 0.1) |
+| kategoryczna / mało wartości | Chi² (lub Z-test dla binarnych) | Jensen–Shannon (> 0.1) |
+
+**Dataset drift** jest zgłaszany, gdy dryfuje ≥ 50% kolumn (parametr `drift_share`). Wszystko to można nadpisać, np. `DataDriftPreset(stattest="psi", stattest_threshold=0.2)`.
+
+| Narzędzie | Typ | Mocne strony | Słabsze strony |
+|---|---|---|---|
+| **Evidently** | OSS + Cloud | raporty HTML, testy w CI, wiele testów statystycznych | brak natywnego alertingu (trzeba podpiąć Prometheus/Grafana) |
+| **NannyML** | OSS | estymacja jakości bez etykiet (CBPE/DLE), drift wielowymiarowy | węższy zakres (głównie tabelaryczne) |
+| **WhyLogs / WhyLabs** | OSS + SaaS | lekkie profile statystyczne (sketches), skalowalne do strumieni | profile zamiast surowych danych → mniej szczegółów |
+| **Alibi Detect** | OSS | detektory dla obrazów/tekstu (MMD, LSDD), outliery | bardziej „researchowe", mniej gotowych dashboardów |
+| **Arize / Fiddler / Datadog ML** | SaaS | gotowe dashboardy, wyjaśnialność, alerting | koszt, dane opuszczają organizację |
+| **Prometheus + Grafana** | OSS | standard SRE, alerting, skalowalność | brak gotowych testów dryfu – liczysz je sam |
 
 ```python
 import pandas as pd
@@ -487,6 +676,38 @@ start_http_server(8000)
 print("Metryki dostępne na http://localhost:8000/metrics")
 ```
 
+> ⚠️ **Uwaga:** powyższy przykład używa domyślnego rejestru globalnego. W testach i w aplikacjach z wieloma workerami (np. `gunicorn`/`uvicorn --workers 4`) użyj `CollectorRegistry()` per proces lub trybu `multiprocess` z `PROMETHEUS_MULTIPROC_DIR` – inaczej każdy worker raportuje własne liczniki, a Prometheus losowo widzi jeden z nich.
+
+#### Typy metryk Prometheus – kiedy którego użyć
+
+| Typ | Zachowanie | Przykład w ML | Typowe zapytanie |
+|---|---|---|---|
+| **Counter** | tylko rośnie (reset przy restarcie) | liczba predykcji, błędów | `rate(x_total[5m])` |
+| **Gauge** | dowolna wartość w chwili t | PSI, AUC, rozmiar kolejki | `x`, `avg_over_time(x[1h])` |
+| **Histogram** | liczniki w bucketach `le` + `_sum` + `_count` | latencja, rozkład score'ów | `histogram_quantile(0.95, sum by (le) (rate(x_bucket[5m])))` |
+| **Summary** | kwantyle liczone po stronie klienta | latencja w jednym procesie | `x{quantile="0.95"}` (nie da się agregować!) |
+
+> 💡 **Histogram predykcji** (np. buckety 0.1, 0.2, … 1.0 dla prawdopodobieństwa) pozwala liczyć drift predykcji bezpośrednio w PromQL, bez osobnego joba batch.
+
+> ⚠️ **Kardynalność etykiet.** Każda unikalna kombinacja etykiet to osobny szereg czasowy. Nigdy nie dawaj `user_id`, `request_id` ani surowych wartości cech jako etykiety – 1 mln użytkowników = 1 mln szeregów i awaria Prometheusa. Etykiety powinny mieć małą, skończoną liczbę wartości (`model_version`, `risk_level`, `feature_name`).
+
+```
+Przepływ metryk:
+
+ ┌──────────────┐  scrape /metrics   ┌────────────┐  PromQL  ┌──────────┐
+ │ ml-api:8000  │◀───── co 15s ──────│ Prometheus │◀─────────│ Grafana  │
+ │ (Counter,    │                    │  (TSDB)    │          └──────────┘
+ │  Histogram)  │                    │   rules ───┼──▶ Alertmanager ──▶ Slack/PagerDuty
+ └──────────────┘                    └─────▲──────┘
+ ┌──────────────┐  push (Pushgateway)      │
+ │ drift job    │──────────────────────────┘   (joby batch, które nie żyją długo)
+ │ (cron, PSI)  │
+ └──────────────┘
+```
+
+> ▶️ **Demo na żywo:** `python lectures/scripts/lecture_06/03_prometheus_metrics.py`  
+> Pokaż format ekspozycji tekstowej i jak z bucketów histogramu powstaje p95 (interpolacja liniowa jak w `histogram_quantile`). Z `--serve` metryki są dostępne pod `http://localhost:8000/metrics`.
+
 ### Konfiguracja Prometheus
 
 ```yaml
@@ -519,7 +740,7 @@ groups:
     rules:
       # Alert: wysoka latencja predykcji
       - alert: HighPredictionLatency
-        expr: histogram_quantile(0.95, ml_prediction_latency_seconds_bucket) > 0.5
+        expr: histogram_quantile(0.95, sum by (le, model_version) (rate(ml_prediction_latency_seconds_bucket[5m]))) > 0.5
         for: 5m
         labels:
           severity: warning
@@ -539,13 +760,41 @@ groups:
 
       # Alert: wysoki error rate
       - alert: HighErrorRate
-        expr: rate(ml_prediction_errors_total[5m]) > 0.01
+        # (odsetek błędów > 1% wszystkich żądań, a nie 0.01 błędu/s)
+        expr: |
+          sum(rate(ml_prediction_errors_total[5m]))
+            / (sum(rate(ml_predictions_total[5m])) + sum(rate(ml_prediction_errors_total[5m])))
+            > 0.01
         for: 2m
         labels:
           severity: critical
         annotations:
           summary: "Wysoki error rate predykcji"
+
+      # Alert: rozkład predykcji „zamarł" (np. model zwraca stałą wartość)
+      - alert: PredictionsStuck
+        expr: stddev_over_time(ml_churn_probability_avg[1h]) == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Średnia predykcja nie zmienia się od godziny"
+
+      # Alert: brak ruchu (serwis żyje, ale nikt go nie woła – zepsuty upstream?)
+      - alert: NoPredictionTraffic
+        expr: sum(rate(ml_predictions_total[15m])) == 0
+        for: 15m
+        labels:
+          severity: warning
 ```
+
+#### Projektowanie alertów – dobre praktyki
+
+- **Alertuj na objawy, nie na przyczyny** – „AUC spadło" / „p95 > SLO" zamiast „CPU 80%".
+- **`for:`** wymusza utrzymanie się warunku – eliminuje pojedyncze piki.
+- **Poziomy severity:** `warning` → kanał Slack (dzień roboczy), `critical` → PagerDuty (budzi on-call). Drift cech to zwykle `warning`, drift + spadek proxy KPI → `critical`.
+- **Każdy alert ma runbook** (`annotations.runbook_url`) – co sprawdzić, jak zrobić rollback.
+- Mierz **precyzję alertów**: jeśli > 50% alertów nie wymaga działania, podnieś progi.
 
 ---
 
@@ -565,6 +814,36 @@ flowchart TD
     EVAL2 -->|Nie| ALERT[Alert:\nRęczna interwencja]
     DEPLOY --> MON
 ```
+
+### Strategie retrainingu – porównanie
+
+| Strategia | Wyzwalacz | Zalety | Wady | Gdzie stosować |
+|---|---|---|---|---|
+| **Ręczna** | decyzja człowieka | pełna kontrola | wolna, nie skaluje się | modele regulowane (kredyty, medycyna) |
+| **Okresowa** (cron) | co dzień/tydzień/miesiąc | prosta, przewidywalny koszt | trenuje niepotrzebnie albo za rzadko | rekomendacje, prognozy popytu |
+| **Na dryf** | PSI/KS > próg | reaguje na zmiany danych | data drift ≠ degradacja → zbędne retrainy | dane szybko się zmieniające |
+| **Na spadek jakości** | AUC/F1 < próg | trenuje tylko gdy trzeba | wymaga etykiet (opóźnienie!) | fraud z szybkim feedbackiem, ads (CTR) |
+| **Online / ciągła** | każda nowa porcja danych | najszybsza adaptacja | ryzyko catastrophic forgetting i ataków (data poisoning) | ads, feed ranking |
+
+W praktyce łączy się je: **okresowo + awaryjnie na spadek jakości**, a drift cech służy jako sygnał do analizy, nie automatyczny wyzwalacz.
+
+#### Quality gate – champion vs challenger
+
+```
+  nowe dane ──▶ walidacja danych ──▶ trening challengera ──▶ ewaluacja na holdoucie (świeże dane!)
+                     │ fail                                          │
+                     ▼                                               ▼
+                  ALERT               challenger ≥ champion + δ  AND  metryki ≥ minimum
+                                       AND fairness OK  AND  latencja OK ?
+                                          │ tak                         │ nie
+                                          ▼                             ▼
+                              shadow / canary 5% ──▶ 100%        zostaw championa + alert
+```
+
+> ⚠️ Holdout do porównania musi pochodzić z **najnowszego okresu** – porównanie na starym zbiorze testowym faworyzuje starego championa i ukrywa concept drift.
+
+> ▶️ **Demo na żywo:** `python lectures/scripts/lecture_06/02_concept_drift_stream.py`  
+> Tygodnie 5–8: alarm DATA_DRIFT, ale AUC bez zmian (retraining zbędny). Tygodnie 9–12: PSI cech ≈ 0, a AUC spada do ~0.52 – wykryje to tylko monitoring jakości. Na końcu quality gate promuje challengera.
 
 ```python
 import schedule
@@ -595,7 +874,8 @@ class AutoRetrainingSystem:
         
         # Sprawdź czy minął minimalny czas od ostatniego retreningu
         if self._last_retraining:
-            hours_since = (datetime.now() - self._last_retraining).seconds / 3600
+            # total_seconds(), a nie .seconds (to drugie ignoruje pełne dni!)
+            hours_since = (datetime.now() - self._last_retraining).total_seconds() / 3600
             if hours_since < self.min_interval:
                 logger.info(f"Zbyt wcześnie na retraining ({hours_since:.1f}h < {self.min_interval}h)")
                 return
@@ -678,7 +958,20 @@ ml_data_drift_psi{feature_name="age"}
 
 # Rozkład risk level
 sum by (risk_level) (rate(ml_predictions_total[1h]))
+
+# Udział predykcji "high" – porównanie z tym samym oknem tydzień temu (sezonowość!)
+  sum(rate(ml_predictions_total{risk_level="high"}[1h])) / sum(rate(ml_predictions_total[1h]))
+- sum(rate(ml_predictions_total{risk_level="high"}[1h] offset 7d)) / sum(rate(ml_predictions_total[1h] offset 7d))
+
+# Porównanie latencji dwóch wersji modelu (canary)
+histogram_quantile(0.95, sum by (le, model_version) (rate(ml_prediction_latency_seconds_bucket[5m])))
 ```
+
+**Zasady dobrego dashboardu ML:**
+1. Na górze **jeden wiersz statusu** (zielony/żółty/czerwony) per model – odpowiedź „czy wszystko OK?" w 5 sekund.
+2. Każdy panel pokazuje **wersję modelu** (adnotacje Grafany przy deploymencie) – skok metryki zbiega się z wdrożeniem?
+3. Metryki ML na tle **linii referencyjnej** z treningu (np. oczekiwany odsetek klasy „high").
+4. Osobne dashboardy: operacyjny (SRE, odświeżanie 10s) i analityczny (DS, dni/tygodnie).
 
 ---
 
@@ -696,6 +989,30 @@ sum by (risk_level) (rate(ml_predictions_total[1h]))
 > ⚠️ **Pułapka 4: Automatyczny retraining bez zabezpieczeń**
 > Automatyczny retraining na „zatrutych" danych może wdrożyć gorszy model. Zawsze porównuj nowy model z aktualnym produkcyjnym i wymagaj minimalnych progów jakości.
 
+> ⚠️ **Pułapka 5: p-value jako jedyne kryterium**
+> Przy dużym ruchu test KS zgłasza dryf dla zmian bez znaczenia (demo `01_drift_metrics.py`). Używaj miar wielkości efektu (PSI, JS, Wasserstein) i korekty na wielokrotne testowanie.
+
+> ⚠️ **Pułapka 6: Feedback loop**
+> Model wpływa na dane, na których jest później oceniany i trenowany: system antyfraudowy blokuje transakcje → nie poznajemy ich prawdziwej etykiety; rekomender pokazuje tylko popularne produkty → tylko one zbierają kliknięcia. Rozwiązanie: mały odsetek ruchu z losową decyzją (*exploration / holdout group*).
+
+> ⚠️ **Pułapka 7: Training-serving skew zamiast dryfu**
+> Wysoki PSI od pierwszego dnia po wdrożeniu to zwykle nie dryf, tylko **różnica w liczeniu cech** między treningiem a serwowaniem (inna strefa czasowa, inne kodowanie kategorii, brak normalizacji). Porównuj cechy zalogowane na produkcji z cechami z treningu dla tych samych encji.
+
+> ⚠️ **Pułapka 8: Brak logowania wejść i predykcji**
+> Bez logów (cechy, predykcja, wersja modelu, timestamp, `request_id`) nie da się policzyć dryfu ani dołączyć etykiet, gdy się pojawią. Loguj asynchronicznie (kolejka/Kafka) i z próbkowaniem przy bardzo dużym ruchu; pamiętaj o RODO (pseudonimizacja).
+
+### Checklista wdrożenia monitoringu
+
+| ✔ | Element |
+|---|---|
+| ☐ | Statystyki referencyjne (kwantyle, rozkłady kategorii) zapisane jako artefakt modelu (np. w MLflow) |
+| ☐ | Logowanie wejść, predykcji, wersji modelu i `request_id` |
+| ☐ | Metryki operacyjne + SLO (np. p95 < 200 ms, dostępność 99.9%) |
+| ☐ | Drift cech (top-k ważnych) i predykcji liczone cyklicznie, min. rozmiar okna |
+| ☐ | Pipeline dołączania etykiet (join po `request_id`) i metryki jakości |
+| ☐ | Alerty z `for:`, severity i runbookiem |
+| ☐ | Polityka retrainingu z quality gate i możliwością rollbacku |
+
 ### Case Study: Tesla Autopilot — monitoring w czasie rzeczywistym
 
 **Tesla** monitoruje modele ML w milionach pojazdów jednocześnie:
@@ -709,6 +1026,23 @@ sum by (risk_level) (rate(ml_predictions_total[1h]))
 - Sezonowe wydarzenia (np. wybory, Super Bowl) powodują gwałtowne zmiany w rozkładzie danych — to **nie jest drift**, ale normalna zmienność.
 - Kluczowe wyzwanie: odróżnienie prawdziwego dryfu od sezonowości. Rozwiązanie: porównywanie z danymi z analogicznego okresu rok wcześniej.
 
+### Case Study: COVID-19 — nagły concept drift na masową skalę
+
+W marcu 2020 r. wiele modeli produkcyjnych przestało działać niemal z dnia na dzień:
+- **Prognozy popytu** w handlu (papier toaletowy, makaron, maseczki) – historyczne wzorce sezonowe stały się bezużyteczne.
+- **Systemy antyfraudowe** w bankach – nagły wzrost zakupów online u klientów, którzy wcześniej płacili tylko w sklepach, generował masę fałszywych alarmów.
+- **Scoring kredytowy** – dochody i zachowania płatnicze zmieniły się w sposób niewidoczny w danych historycznych.
+
+Lekcje: (1) firmy z monitoringiem predykcji i proxy KPI wykryły problem w ciągu dni, inne – po tygodniach strat; (2) retraining na danych z 2 tygodni był zbyt mało stabilny – stosowano **reguły biznesowe jako fallback** i ręczne korekty; (3) po pandemii trzeba było zdecydować, czy dane z 2020 r. w ogóle włączać do treningu.
+
+### Case Study: Zillow Offers — koszt niezauważonego dryfu
+
+Zillow używał modelu wyceny nieruchomości (Zestimate) do **automatycznego kupowania domów**. W 2021 r. rynek zaczął się ochładzać, a model nadal przewidywał wzrosty cen (concept drift + feedback loop: firma sama podbijała ceny w niektórych regionach). Skutek: zakup tysięcy domów powyżej ceny rynkowej, odpis rzędu **ponad 500 mln USD** i zamknięcie działu. Wniosek: gdy model podejmuje decyzje finansowe automatycznie, monitoring **błędu predykcji na świeżych transakcjach** i limity ekspozycji są obowiązkowe.
+
+### Case Study: Uber Michelangelo — monitoring na skalę platformy
+
+Platforma ML Ubera automatycznie dla każdego wdrożonego modelu loguje próbkę predykcji, później łączy je z rzeczywistymi wynikami (np. faktyczny czas dojazdu dla modelu ETA) i publikuje metryki jakości na wspólnych dashboardach. Zespoły nie muszą budować monitoringu samodzielnie – to przykład **monitoringu jako usługi platformowej**, który jest jednym z wyznaczników dojrzałości MLOps.
+
 ---
 
 ## Pytania kontrolne i do dyskusji
@@ -720,6 +1054,9 @@ sum by (risk_level) (rate(ml_predictions_total[1h]))
 5. Jak skonfigurować automatyczny retraining, aby nie wdrożyć gorszego modelu?
 6. Jakie metryki wyeksponujesz na dashboardzie Grafana dla serwisu ML?
 7. **Dyskusja:** Jak odróżnić prawdziwy drift od sezonowej zmienności danych?
+8. Dlaczego test KS przy bardzo dużych próbkach generuje fałszywe alarmy i czym go zastąpić?
+9. Jak monitorować model, gdy etykiety pojawiają się dopiero po 60 dniach?
+10. Czym różni się data drift od training-serving skew i jak je rozróżnić?
 
 
 ### Proponowane odpowiedzi
@@ -731,6 +1068,9 @@ sum by (risk_level) (rate(ml_predictions_total[1h]))
 5. Retraining powinien mieć quality gates: walidację danych, porównanie z modelem bazowym, próg minimalnych metryk, testy regresji i etap canary/shadow przed pełną promocją. Bez tego łatwo wdrożyć model gorszy od obecnego.
 6. Na dashboard dałbym: RPS, p95/p99 latencję, error rate, rozkłady predykcji, PSI/KS dla kluczowych cech, metryki jakości (AUC/F1 jeśli labels dostępne) i status alertów/retrainingu. Taki zestaw łączy perspektywę operacyjną i ML.
 7. Trzeba porównywać nie tylko do „wczoraj”, ale też do analogicznych okresów sezonowych, używać okien czasowych i progów utrzymywania się sygnału. Pomaga też wzbogacenie monitoringu o kontekst biznesowy (kampanie, święta, wydarzenia).
+8. p-value mierzy, czy rozkłady są identyczne, a nie jak bardzo się różnią – przy n rzędu 100 000 nawet zmiana o 0.05σ daje p ≈ 0. Lepiej alertować na miarach wielkości efektu (PSI, JS, Wasserstein/σ) z progami biznesowymi i stosować korektę na wielokrotne testowanie.
+9. Użyć hierarchii sygnałów: drift cech i predykcji (natychmiast), metryki proxy (np. aktywność klienta, reklamacje), estymacja jakości bez etykiet (CBPE w NannyML), a po 60 dniach – prawdziwe metryki na dołączonych etykietach. Ważne jest logowanie `request_id`, by etykiety dało się dołączyć.
+10. Data drift to zmiana świata w czasie, skew to różnica w implementacji cech trening vs serwowanie. Skew widać od razu po wdrożeniu (wysoki PSI od dnia 0) i potwierdza go porównanie cech dla tych samych encji policzonych obiema ścieżkami.
 
 
 ---
@@ -743,6 +1083,8 @@ sum by (risk_level) (rate(ml_predictions_total[1h]))
 - **Prometheus + Grafana** to standard dla monitoringu operacyjnego i ML.
 - **Automatyczny retraining** zamyka pętlę MLOps — ale wymaga zabezpieczeń (quality gates).
 - Odróżniaj prawdziwy drift od sezonowości i normalnej zmienności.
+- **Covariate shift** nie musi psuć modelu, a **concept drift** jest niewidoczny dla testów na cechach – potrzebny monitoring jakości (z etykietami lub proxy).
+- Do alertów używaj **miar wielkości efektu**, a nie samego p-value; uważaj na kardynalność etykiet w Prometheus.
 
 ## Literatura i zasoby
 
@@ -753,3 +1095,7 @@ sum by (risk_level) (rate(ml_predictions_total[1h]))
 - [Google: Monitoring ML Models in Production](https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning#monitoring)
 - [NannyML – Post-deployment ML Monitoring](https://nannyml.readthedocs.io/)
 - [Failing Loudly: An Empirical Study of Methods for Detecting Dataset Shift](https://arxiv.org/abs/1810.11953)
+- [Gama i in.: A Survey on Concept Drift Adaptation (ACM Computing Surveys, 2014)](https://dl.acm.org/doi/10.1145/2523813)
+- [Quiñonero-Candela i in.: Dataset Shift in Machine Learning (MIT Press, 2009)](https://mitpress.mit.edu/9780262545877/dataset-shift-in-machine-learning/)
+- [Google SRE Book – Monitoring Distributed Systems (Golden Signals)](https://sre.google/sre-book/monitoring-distributed-systems/)
+- [Prometheus – Histograms and Summaries](https://prometheus.io/docs/practices/histograms/)
