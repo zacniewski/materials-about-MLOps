@@ -719,6 +719,8 @@ imputer = SimpleImputer(strategy="median", add_indicator=True)
 | Hashing | bardzo duża kardynalność, streaming | kolizje, brak interpretowalności |
 | Embeddingi | DL, kategorie jak `product_id` | potrzeba dużo danych |
 
+> 📘 **CV (Cross-Validation, walidacja krzyżowa)** – technika oceny modelu, w której zbiór treningowy dzieli się na *k* części (*foldów*, np. k=5). Model trenuje się *k* razy, za każdym razem na *k−1* foldach, a ocenia na pozostałym; wynik to średnia z *k* przebiegów. **Out-of-fold (OOF)** oznacza, że wartość dla danego wiersza (np. target encoding) wyliczamy wyłącznie z foldów, do których ten wiersz *nie należy* – dzięki temu etykieta wiersza nie „przecieka” do jego własnej cechy. W sklearn: `KFold`, `cross_val_score`, `TimeSeriesSplit` (dla danych czasowych). Wszystkie kroki preprocessingu i selekcji cech muszą być wykonywane **wewnątrz** każdego foldu (np. przez `Pipeline`), inaczej CV daje zawyżone wyniki (sekcja 10).
+
 ### Własny transformer zgodny ze sklearn
 
 Cechy pochodne warto także zamknąć w pipeline, aby produkcja liczyła je identycznie:
