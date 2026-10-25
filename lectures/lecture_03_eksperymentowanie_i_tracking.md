@@ -83,6 +83,52 @@ flowchart LR
 
 Dobra praktyka: **zawsze zaczynaj od baseline'u** (np. model większościowy, regresja logistyczna) – bez punktu odniesienia nie wiadomo, czy złożony model wnosi wartość.
 
+### Dlaczego ML potrzebuje czegoś więcej niż Git?
+
+W klasycznym oprogramowaniu wynik programu zależy (prawie) wyłącznie od kodu. W ML wynik jest funkcją **kodu, danych, konfiguracji i losowości**:
+
+```
+              ┌───────────── Software 1.0 ─────────────┐
+  kod  ─────► │  program  │ ─────► zachowanie          │   Git wystarcza
+              └────────────────────────────────────────┘
+
+              ┌───────────── Software 2.0 (ML) ────────┐
+  kod  ─────► │                                        │
+  dane ─────► │  trening  │ ─────► model ─► zachowanie │   Git + DVC + tracking
+  parametry ► │                                        │
+  seed ─────► │                                        │
+              └────────────────────────────────────────┘
+```
+
+| Narzędzie | Co wersjonuje | Czego **nie** rozwiązuje |
+|---|---|---|
+| Git | kod, konfiguracje YAML | duże dane, wyniki, metryki |
+| DVC / LakeFS | dane i duże pliki | porównywanie wyników runów |
+| MLflow / W&B | parametry, metryki, artefakty, modele | wersjonowanie samych danych źródłowych |
+| Docker / `requirements.txt` | środowisko | logikę eksperymentu |
+
+> 💡 Tracking eksperymentów jest „dziennikiem laboratoryjnym” data scientisty. Git mówi, **jak** kod wyglądał, a tracking – **co** z tym kodem osiągnięto i na jakich danych.
+
+### Case study: „model, którego nie umiemy odtworzyć”
+
+Zespół scoringu kredytowego wdrożył model z AUC 0.81. Po pół roku regulator poprosił o wyjaśnienie decyzji, a zespół chciał model douczyć. Okazało się, że:
+
+1. Notebook, z którego powstał model, był wielokrotnie edytowany po treningu.
+2. Dane treningowe pochodziły z zapytania SQL do tabeli, która od tego czasu była nadpisywana.
+3. Nikt nie pamiętał, czy użyto `class_weight="balanced"`.
+
+Ponowny trening dawał AUC 0.77–0.79 i nikt nie umiał wyjaśnić różnicy. Koszt: kilka tygodni pracy na „archeologię”. Z trackingiem wystarczyłoby otworzyć run, odczytać commit, hash danych i parametry.
+
+### Poziomy dojrzałości trackingu
+
+| Poziom | Opis | Typowy objaw |
+|---|---|---|
+| 0 | brak trackingu, wyniki w głowie / Excelu | „który plik `.pkl` jest aktualny?” |
+| 1 | ręczne logowanie metryk w arkuszu | literówki, brak artefaktów |
+| 2 | MLflow lokalnie (`./mlruns`) | każdy ma swoje runy, brak współdzielenia |
+| 3 | wspólny tracking server + registry | porównania w zespole, aliasy modeli |
+| 4 | tracking zintegrowany z pipeline'ami CI/CD | każdy trening produkcyjny automatycznie zalogowany |
+
 ---
 
 ## 2. MLflow – platforma do śledzenia eksperymentów
@@ -106,6 +152,43 @@ pip install mlflow scikit-learn pandas
 mlflow ui
 ```
 
+### Architektura MLflow Tracking
+
+MLflow rozdziela dwa rodzaje magazynów:
+
+- **Backend store** – metadane: eksperymenty, runy, parametry, metryki, tagi (pliki w `./mlruns` albo baza SQL: SQLite, PostgreSQL, MySQL).
+- **Artifact store** – duże pliki: modele, wykresy, raporty (lokalny dysk, S3, GCS, Azure Blob, MinIO).
+
+```mermaid
+flowchart LR
+    CL["Kod treningowy<br/>mlflow client"] -->|"REST API"| TS["Tracking Server<br/>mlflow server"]
+    UI["Przeglądarka<br/>MLflow UI"] --> TS
+    TS --> BS[("Backend store<br/>PostgreSQL")]
+    TS --> AS[("Artifact store<br/>S3 lub MinIO")]
+```
+
+| Scenariusz | Backend store | Artifact store | Kiedy |
+|---|---|---|---|
+| Lokalny | `./mlruns` (pliki) | `./mlruns` | nauka, prototypy, ten wykład |
+| Lokalny z bazą | `sqlite:///mlflow.db` | `./mlartifacts` | potrzebny Model Registry lokalnie |
+| Zespołowy | PostgreSQL | S3 / MinIO | kilka osób, wspólne porównania |
+| Zarządzany | Databricks, SageMaker, Azure ML | chmura | organizacje bez własnej infrastruktury |
+
+```bash
+# Serwer zespołowy (przykład)
+mlflow server \
+  --backend-store-uri postgresql://mlflow:haslo@db:5432/mlflow \
+  --artifacts-destination s3://ml-artifacts \
+  --host 0.0.0.0 --port 5000
+
+# Klient wskazuje serwer przez zmienną środowiskową
+export MLFLOW_TRACKING_URI=http://mlflow.firma.local:5000
+```
+
+> ⚠️ Domyślny `mlflow server` nie ma uwierzytelniania. Nie wystawiaj go publicznie bez reverse proxy z logowaniem (lub wbudowanego `--app-name basic-auth`).
+
+> 💡 Skrypty z `lectures/scripts/lecture_03/` domyślnie piszą do `./mlruns`, a po ustawieniu `MLFLOW_TRACKING_URI` – do serwera. Kod treningowy się nie zmienia, zmienia się tylko konfiguracja.
+
 ---
 
 ## 3. Podstawy MLflow Tracking
@@ -119,6 +202,73 @@ graph LR
     RUN --> MET[Metrics\nWyniki ewaluacji]
     RUN --> ART[Artifacts\nModele, wykresy, dane]
     RUN --> TAG[Tags\nMetadane]
+```
+
+### Parametr, metryka czy tag?
+
+| Cecha | Parametr | Metryka | Tag |
+|---|---|---|---|
+| Typ wartości | tekst (zapisywany jako string) | liczba (float) | tekst |
+| Zmienność | **niezmienny** po zapisaniu | może mieć wiele wartości (`step`, `timestamp`) | można nadpisać |
+| Rola | wejście eksperymentu | wynik eksperymentu | kontekst, filtrowanie |
+| Przykład | `max_depth=8` | `val_loss` w epoce 12 | `git_commit`, `owner` |
+
+> ⚠️ Ponowne `log_param` z **inną** wartością dla tego samego klucza w tym samym runie kończy się błędem. To celowe – parametry opisują konfigurację, która nie powinna się zmieniać w trakcie runu.
+
+### Cykl życia runu
+
+```mermaid
+flowchart LR
+    S["start_run"] --> RUN["RUNNING"]
+    RUN -->|"wyjście z bloku with"| FIN["FINISHED"]
+    RUN -->|"wyjątek"| FAIL["FAILED"]
+    RUN -->|"przerwanie Ctrl C"| KILL["KILLED"]
+```
+
+Użycie `with mlflow.start_run():` gwarantuje, że run zostanie zamknięty z poprawnym statusem także przy wyjątku – to wykorzystuje skrypt `04_reproducibility.py` (run `failing-run`).
+
+### Autologging – minimum wysiłku
+
+Większość popularnych bibliotek ma integrację `autolog`, która sama loguje parametry estymatora, metryki treningowe i model:
+
+```python
+import mlflow
+from sklearn.datasets import make_classification
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+
+mlflow.set_experiment("autolog-demo")
+mlflow.sklearn.autolog(log_input_examples=True)
+
+X, y = make_classification(n_samples=2000, random_state=42)
+X_tr, X_te, y_tr, y_te = train_test_split(X, y, random_state=42)
+
+with mlflow.start_run(run_name="rf-autolog"):
+    model = RandomForestClassifier(n_estimators=150, random_state=42).fit(X_tr, y_tr)
+    # metryki testowe nadal warto zalogować jawnie
+    mlflow.log_metric("test_accuracy", model.score(X_te, y_te))
+```
+
+| Podejście | Zalety | Wady |
+|---|---|---|
+| `autolog()` | szybkie, nic nie zapomnimy z parametrów modelu | loguje dużo szumu, nie zna metryk biznesowych ani wersji danych |
+| Logowanie ręczne | pełna kontrola, spójne nazwy metryk | więcej kodu, łatwo coś pominąć |
+| Hybryda (zalecane) | autolog + ręcznie: dane, commit, metryki testowe | – |
+
+### Sygnatura modelu i dane wejściowe
+
+Sygnatura opisuje schemat wejścia i wyjścia modelu. Dzięki niej serwer predykcji może odrzucić żądanie z błędnymi kolumnami lub typami:
+
+```python
+import mlflow
+from mlflow.models import infer_signature
+
+signature = infer_signature(X_tr, model.predict_proba(X_tr)[:, 1])
+with mlflow.start_run():
+    dataset = mlflow.data.from_numpy(X_tr, targets=y_tr, name="churn-train")
+    mlflow.log_input(dataset, context="training")   # digest danych w UI
+    mlflow.sklearn.log_model(model, "model", signature=signature,
+                             input_example=X_tr[:5])
 ```
 
 ### Przykład: Pełny eksperyment z MLflow
@@ -246,6 +396,22 @@ print(results_df[["name", "auc_roc", "f1_score", "cv_auc_mean"]].to_string(index
 > **Kiedy:** po omówieniu kodu z sekcji 3. Trwa około 40 s, więc w tym czasie możesz omówić kluczowe pojęcia.  
 > **Co pokazać:** w MLflow UI zaznacz 5 runów i kliknij **Compare** (wykres parallel coordinates). Otwórz run GBM i pokaż metrykę krokową `staged_roc_auc`, artefakty `evaluation/confusion_matrix.png` oraz model z sygnaturą i `input_example`.
 
+### Typowe błędy w kodzie logującym
+
+| Błąd | Skutek | Poprawka |
+|---|---|---|
+| `mlflow.set_experiment` pominięte | runy lądują w eksperymencie `Default` | zawsze ustawiaj eksperyment na początku skryptu |
+| `start_run()` bez `with` i bez `end_run()` | kolejne runy zagnieżdżają się lub status zostaje `RUNNING` | używaj menedżera kontekstu |
+| Zapis artefaktów do stałej ścieżki `/tmp/x.txt` | kolizje przy równoległych runach | `tempfile.TemporaryDirectory()` lub `mlflow.log_text` |
+| Logowanie metryki w pętli bez `step` | wykres krzywej nieczytelny | `log_metric(name, value, step=epoch)` |
+| Różne nazwy tej samej metryki (`auc`, `roc_auc`, `AUC`) | nie da się porównać runów | ustal słownik nazw w zespole |
+
+```python
+# Zamiast pliku tymczasowego – bezpośrednio z pamięci
+mlflow.log_text(report, "evaluation/classification_report.txt")
+mlflow.log_dict({"threshold": 0.42, "features": 20}, "config/eval.json")
+```
+
 ---
 
 ## 4. Porównywanie eksperymentów
@@ -315,6 +481,69 @@ print(f"sparowany t-test: p = {p:.3f} → {'różnica istotna' if p < 0.05 else 
 
 > Wyniki z CV warto logować w MLflow jako `roc_auc_mean` i `roc_auc_std` – wtedy porównanie w UI uwzględnia niepewność.
 
+### Bootstrap przedziału ufności na zbiorze testowym
+
+Gdy mamy jeden zbiór testowy, możemy oszacować niepewność metryki przez losowanie próbek ze zwracaniem:
+
+```python
+import numpy as np
+from sklearn.metrics import roc_auc_score
+
+def bootstrap_auc(y_true, y_score, n_boot=1000, seed=42):
+    rng = np.random.default_rng(seed)
+    n = len(y_true)
+    scores = []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, n)
+        if len(np.unique(y_true[idx])) < 2:   # AUC wymaga obu klas
+            continue
+        scores.append(roc_auc_score(y_true[idx], y_score[idx]))
+    return np.percentile(scores, [2.5, 97.5])
+
+low, high = bootstrap_auc(np.asarray(y_test), y_prob)
+mlflow.log_metrics({"roc_auc_ci_low": low, "roc_auc_ci_high": high})
+```
+
+Jeżeli przedziały ufności dwóch modeli mocno się nakładają, różnica jest prawdopodobnie przypadkowa (dla ścisłego testu użyj bootstrapu **sparowanego** – te same indeksy dla obu modeli).
+
+### Składnia filtrów `search_runs`
+
+| Cel | Filtr |
+|---|---|
+| metryka powyżej progu | `metrics.roc_auc > 0.9` |
+| konkretny parametr | `params.max_depth = '8'` (parametry są stringami!) |
+| tag | `tags.model_type = 'gbm'` |
+| tylko zakończone | `attributes.status = 'FINISHED'` |
+| nazwa runu | `attributes.run_name LIKE 'GBM%'` |
+| łączenie warunków | `metrics.roc_auc > 0.9 and tags.feature_set = 'v2'` |
+
+```python
+import mlflow
+
+# Wynik jako pandas.DataFrame – wygodne do analiz i wykresów
+df = mlflow.search_runs(
+    experiment_names=["churn-prediction-v1"],
+    filter_string="attributes.status = 'FINISHED'",
+    order_by=["metrics.roc_auc DESC"],
+)
+print(df[["tags.mlflow.runName", "metrics.roc_auc", "params.max_depth"]].head())
+```
+
+### Jak wybrać „najlepszy” model?
+
+```mermaid
+flowchart TD
+    A["Kandydaci z search_runs"] --> B{"Metryka główna<br/>lepsza od baseline?"}
+    B -->|"nie"| X["Odrzuć"]
+    B -->|"tak"| C{"Różnica istotna<br/>CV lub bootstrap?"}
+    C -->|"nie"| S["Wybierz prostszy<br/>lub tańszy model"]
+    C -->|"tak"| D{"Spełnia ograniczenia<br/>latencja, rozmiar, fairness?"}
+    D -->|"nie"| X
+    D -->|"tak"| R["Rejestracja jako challenger"]
+```
+
+> 💡 Przy remisie statystycznym wybieraj model **prostszy** (brzytwa Ockhama): szybszy w inferencji, łatwiejszy do wyjaśnienia i utrzymania.
+
 ---
 
 ## 5. Organizacja eksperymentów – dobre praktyki
@@ -375,6 +604,26 @@ with mlflow.start_run(run_name=run_name, tags=tags):
     pass  # ... trening
 ```
 
+### Tagi systemowe vs własne
+
+MLflow sam ustawia tagi z prefiksem `mlflow.`, m.in. `mlflow.runName`, `mlflow.user`, `mlflow.source.name` (skrypt) i `mlflow.source.git.commit` (gdy skrypt uruchomiono w repozytorium Git). Własne tagi nie powinny używać tego prefiksu.
+
+### Antywzorce organizacji
+
+> ⚠️ **Jeden eksperyment na wszystko** – tysiące runów w `Default`, różne zbiory danych i metryki. Porównanie traci sens.
+
+> ⚠️ **Eksperyment na każdy run** – brak możliwości porównania w jednym widoku. Eksperyment = pytanie badawcze, nie pojedyncza próba.
+
+> ⚠️ **Informacja tylko w nazwie runu** – `GBM_lr01_v2_final` jest nieczytelne dla filtrów. Kluczowe informacje trzymaj w parametrach i tagach, nazwa jest tylko etykietą dla człowieka.
+
+### Checklista przed uruchomieniem eksperymentu
+
+- [ ] Ustawiony właściwy eksperyment (`set_experiment`).
+- [ ] Zapisana hipoteza (np. tag `hypothesis` lub opis runu `mlflow.note.content`).
+- [ ] Zalogowane: commit, wersja / hash danych, seed.
+- [ ] Ta sama metryka główna i ten sam podział danych co baseline.
+- [ ] Kod zatwierdzony w Git (brak niezacommitowanych zmian – tag `git_dirty`).
+
 ---
 
 ## 6. Optuna – automatyczne strojenie hiperparametrów
@@ -431,6 +680,64 @@ with mlflow.start_run(run_name="optuna-study"):
     print(f"Najlepsze hiperparametry: {study.best_params}")
     print(f"Najlepsze AUC: {study.best_value:.4f}")
 ```
+
+### Pruning – wczesne przerywanie słabych prób
+
+Pruner (np. `MedianPruner`) działa tylko wtedy, gdy próba **raportuje wyniki pośrednie**. W powyższym przykładzie z `cross_val_score` nie ma metryk pośrednich, więc pruner nic nie robi. Poprawna wersja raportuje wynik po każdym foldzie:
+
+```python
+import numpy as np
+import optuna
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import roc_auc_score
+
+def objective(trial: optuna.Trial) -> float:
+    params = {
+        "n_estimators": trial.suggest_int("n_estimators", 50, 300),
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        "max_depth": trial.suggest_int("max_depth", 2, 6),
+    }
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    scores = []
+    for fold, (tr, va) in enumerate(cv.split(X_train, y_train)):
+        model = GradientBoostingClassifier(**params, random_state=42)
+        model.fit(X_train[tr], y_train[tr])
+        scores.append(roc_auc_score(y_train[va], model.predict_proba(X_train[va])[:, 1]))
+        trial.report(np.mean(scores), step=fold)      # wynik pośredni
+        if trial.should_prune():                       # gorzej niż mediana?
+            raise optuna.TrialPruned()
+    return float(np.mean(scores))
+```
+
+### Grid vs random search – intuicja
+
+```
+   Grid search 3×3                    Random search (9 prób)
+   ważny parametr →                   ważny parametr →
+   ┌───────────────┐                  ┌───────────────┐
+   │ ●     ●     ● │                  │   ●       ●   │
+   │               │                  │ ●     ●       │
+   │ ●     ●     ● │                  │         ●   ● │
+   │               │                  │  ●   ●        │
+   │ ●     ●     ● │                  │            ●  │
+   └───────────────┘                  └───────────────┘
+   3 różne wartości ważnego           9 różnych wartości ważnego
+   parametru                          parametru
+```
+
+### Projektowanie przestrzeni przeszukiwania
+
+| Hiperparametr | Rozkład | Dlaczego |
+|---|---|---|
+| `learning_rate` | log-uniform (`log=True`) | różnica 0.001 → 0.01 jest tak samo ważna jak 0.01 → 0.1 |
+| `C`, `alpha` (regularyzacja) | log-uniform | zmiany rzędu wielkości |
+| `max_depth`, `num_layers` | int, uniform | mały zakres dyskretny |
+| `subsample`, `dropout` | float, uniform | ograniczony przedział [0, 1] |
+| `optimizer`, `kernel` | categorical | brak porządku |
+
+> 💡 Zacznij od szerokiej przestrzeni i małej liczby prób, obejrzyj `plot_param_importances`, a potem zawęź zakresy najważniejszych parametrów.
+
+> ⚠️ Jeżeli najlepsza wartość leży **na brzegu** przedziału (np. `learning_rate=0.3` przy górnej granicy 0.3), przestrzeń jest prawdopodobnie zbyt wąska.
 
 ### Wizualizacja przestrzeni hiperparametrów
 
@@ -568,6 +875,55 @@ def train_neural_network(
         return model
 ```
 
+### Co logować w treningu sieci neuronowych
+
+| Kategoria | Przykłady | Częstotliwość |
+|---|---|---|
+| Krzywe uczenia | `train_loss`, `val_loss`, `val_auc` | co epokę (lub co N kroków) |
+| Optymalizacja | `learning_rate` (przy schedulerze), norma gradientu | co krok / epokę |
+| Zasoby | zużycie GPU, czas epoki | co epokę |
+| Checkpointy | najlepszy model wg `val_loss` | przy poprawie |
+| Przykłady predykcji | obrazy z błędną klasą, próbki tekstu | rzadko (artefakty są duże) |
+
+### Odczytywanie krzywych uczenia
+
+```
+ loss                                    loss
+  │╲                                      │╲
+  │ ╲__  val                              │ ╲   val      ___----
+  │    ╲____________                      │  ╲_____----
+  │ ╲__                                   │ ╲__
+  │    ╲____________ train                │    ╲________________ train
+  └──────────────────► epoka              └──────────────────► epoka
+   dobre dopasowanie                       overfitting: val rośnie,
+                                           train dalej spada → early stopping
+```
+
+### Walidacja, early stopping i checkpoint
+
+```python
+best_val, patience, bad_epochs = float("inf"), 5, 0
+for epoch in range(epochs):
+    train_loss = train_one_epoch(model, train_loader)      # funkcje pomocnicze
+    val_loss = evaluate(model, val_loader)
+    mlflow.log_metrics({"train_loss": train_loss, "val_loss": val_loss}, step=epoch)
+
+    if val_loss < best_val:
+        best_val, bad_epochs = val_loss, 0
+        torch.save(model.state_dict(), "best.pt")
+        mlflow.log_artifact("best.pt", artifact_path="checkpoints")
+    else:
+        bad_epochs += 1
+        if bad_epochs >= patience:
+            mlflow.set_tag("early_stopped_epoch", epoch)
+            break
+mlflow.log_metric("best_val_loss", best_val)
+```
+
+> ⚠️ Logowanie metryki **po każdym batchu** przy milionach kroków potrafi spowolnić trening i zapchać backend store. Loguj co N kroków lub użyj `mlflow.log_metrics` w paczkach.
+
+> 💡 Dla PyTorch Lightning, Keras i Hugging Face Transformers istnieje `mlflow.<framework>.autolog()` lub gotowy callback – nie trzeba pisać pętli logującej samodzielnie.
+
 ---
 
 ## 8. Reproducibility – gwarancja powtarzalności
@@ -617,6 +973,53 @@ with mlflow.start_run():
     log_environment_info()
     # ... reszta eksperymentu
 ```
+
+### Ustawianie seedów w jednym miejscu
+
+```python
+import os
+import random
+import numpy as np
+
+def set_seed(seed: int = 42) -> None:
+    """Ustawia seedy wszystkich używanych generatorów losowych."""
+    random.seed(seed)
+    np.random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)  # działa dla podprocesów
+    try:
+        import torch
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.benchmark = False
+    except ImportError:
+        pass
+```
+
+### Hash danych jako „odcisk palca”
+
+```python
+import hashlib
+import pandas as pd
+
+def dataframe_hash(df: pd.DataFrame) -> str:
+    """Stabilny hash zawartości ramki danych (niezależny od pliku)."""
+    row_hashes = pd.util.hash_pandas_object(df, index=True).values
+    return hashlib.md5(row_hashes.tobytes()).hexdigest()
+
+mlflow.set_tag("data_hash", dataframe_hash(train_df))
+```
+
+Ten sam pomysł (hash, commit git, seed) realizuje skrypt `04_reproducibility.py`.
+
+### Poziomy reprodukowalności
+
+| Poziom | Definicja | Co jest potrzebne |
+|---|---|---|
+| Bitowa | identyczne wagi i predykcje | te same dane, kod, seed, biblioteki, sprzęt, deterministyczne operacje |
+| Statystyczna | metryki w granicach niepewności | dane, kod, konfiguracja; seed opcjonalny |
+| Koncepcyjna | ten sam wniosek przy innej implementacji | opis metody i danych |
+
+> 💡 W praktyce produkcyjnej zwykle wystarcza reprodukowalność **statystyczna**, ale do debugowania i audytu przydaje się bitowa.
 
 
 > **▶️ Demo na żywo:** `python lectures/scripts/lecture_03/04_reproducibility.py`  
@@ -701,6 +1104,20 @@ wandb.finish()
 | Kolaboracja | Ograniczona | Wbudowana |
 | Model Registry | Tak | Tak |
 
+### Szerszy krajobraz narzędzi
+
+| Narzędzie | Model | Mocne strony | Uwagi |
+|---|---|---|---|
+| MLflow | open source, self-hosted lub zarządzany | standard de facto, registry, wiele flavorów modeli | UI prostsze niż konkurencji |
+| Weights & Biases | SaaS (opcja on-prem) | wizualizacje, raporty, sweeps | dane trafiają do chmury dostawcy |
+| Neptune.ai | SaaS | skalowalne metadane, porównania | płatny przy większej skali |
+| Comet ML | SaaS / on-prem | panele, porównanie kodu | podobny do W&B |
+| ClearML | open source | tracking + orkiestracja + kolejki zadań | bardziej rozbudowana instalacja |
+| DVC (`dvc exp`) | open source, oparty na Git | eksperymenty jako commity, wersjonowanie danych | brak pełnego serwera UI (Studio osobno) |
+| TensorBoard | open source | krzywe uczenia DL | brak registry i zarządzania runami |
+
+> 💡 Kryteria wyboru: gdzie mogą być przechowywane dane (regulacje, RODO), koszt przy skali zespołu, integracja z istniejącą chmurą i potrzeba Model Registry.
+
 
 ### Model Registry – cykl życia wersji modelu
 
@@ -752,6 +1169,41 @@ with mlflow.start_run(run_name="failed-experiment", tags={"status": "failed"}):
 > ⚠️ **Pułapka 4: Metryki ML vs metryki biznesowe**
 > Wysoki AUC-ROC nie zawsze oznacza wartość biznesową. Model z AUC=0.85 może generować więcej zysku niż model z AUC=0.92, jeśli lepiej identyfikuje klientów o wysokiej wartości. Zawsze loguj metryki biznesowe obok metryk ML.
 
+> ⚠️ **Pułapka 5: Wyciek danych (data leakage) w preprocessingu**
+> Skalowanie lub selekcja cech dopasowana na całym zbiorze przed podziałem na foldy zawyża metryki CV. Umieszczaj preprocessing w `sklearn.pipeline.Pipeline`, aby był dopasowywany tylko na części treningowej każdego foldu.
+
+```python
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.feature_selection import SelectKBest
+from sklearn.linear_model import LogisticRegression
+
+# ✅ scaler i selekcja cech dopasowywane wewnątrz każdego foldu
+pipe = make_pipeline(StandardScaler(), SelectKBest(k=10), LogisticRegression(max_iter=1000))
+scores = cross_val_score(pipe, X_train, y_train, cv=5, scoring="roc_auc")
+```
+
+> ⚠️ **Pułapka 6: Wybór najlepszego z setek runów (multiple comparisons)**
+> Im więcej prób, tym większa szansa, że najlepszy wynik jest szczęśliwym przypadkiem. Najlepszą konfigurację z HPO zawsze potwierdź na niezależnym zbiorze testowym lub powtórzeniem z innymi seedami.
+
+> ⚠️ **Pułapka 7: Niezacommitowany kod**
+> Tag `git_commit` jest bezwartościowy, jeśli run powstał z lokalnie zmienionego kodu. Loguj też flagę `git_dirty` (wynik `git status --porcelain`) albo blokuj treningi „oficjalne” przy brudnym repozytorium.
+
+> ⚠️ **Pułapka 8: Metryka liczona inaczej w różnych runach**
+> np. F1 przy progu 0.5 w jednym runie i przy progu optymalnym w innym. Wspólna funkcja `evaluate_model` w repozytorium (jak w skryptach do wykładu) eliminuje ten problem.
+
+### Podsumowanie pułapek
+
+| Pułapka | Objaw | Zabezpieczenie |
+|---|---|---|
+| Różne dane | niespójne porównania | `data_version`, `log_input` |
+| Overfitting do testu | spadek jakości na produkcji | train / val / test, test użyty raz |
+| Brak negatywnych wyników | powtarzanie nieudanych pomysłów | loguj każdy run, także FAILED |
+| Metryki tylko ML | model „lepszy”, a zysk mniejszy | metryki biznesowe w runie |
+| Data leakage | podejrzanie wysokie wyniki | `Pipeline`, podział przed preprocessingiem |
+| Multiple comparisons | wynik nie powtarza się | potwierdzenie na holdout / innych seedach |
+| Brudne repozytorium | nie da się odtworzyć kodu | tag `git_dirty`, CI |
+
 ### Case Study: Netflix — eksperymenty na skalę
 
 **Netflix** prowadzi tysiące eksperymentów ML jednocześnie (rekomendacje, thumbnails, personalizacja UI):
@@ -770,6 +1222,11 @@ with mlflow.start_run(run_name="failed-experiment", tags={"status": "failed"}):
 5. Porównaj MLflow i Weights & Biases — kiedy wybierzesz jedno, a kiedy drugie?
 6. Co to jest overfitting do zbioru testowego i jak go uniknąć?
 7. **Dyskusja:** Czy warto logować eksperymenty, które zakończyły się niepowodzeniem? Uzasadnij.
+8. Czym różni się backend store od artifact store w MLflow? Co przechowuje każdy z nich?
+9. Dlaczego `MedianPruner` nie przerwie żadnej próby, jeśli funkcja celu nie wywołuje `trial.report`?
+10. Masz dwa modele: AUC 0.874 ± 0.012 i 0.871 ± 0.010 (10-fold CV). Który wdrożysz i dlaczego?
+11. Dlaczego `learning_rate` próbkujemy w skali logarytmicznej?
+12. Jakie są zalety i wady `mlflow.autolog()` w porównaniu z ręcznym logowaniem?
 
 
 ### Proponowane odpowiedzi
@@ -781,6 +1238,11 @@ with mlflow.start_run(run_name="failed-experiment", tags={"status": "failed"}):
 5. MLflow wybiorę, gdy potrzebuję open-source i self-hostingu; W&B, gdy priorytetem jest współpraca zespołowa i bogate UI SaaS. Oba narzędzia wspierają tracking, ale różnią się stylem pracy i kosztem.
 6. Overfitting do testu to strojenie decyzji pod jeden zbiór testowy, przez co wynik testowy przestaje być obiektywny. Zapobiegamy temu przez osobny validation set/CV i użycie testu dopiero na końcu.
 7. Tak, warto logować także nieudane eksperymenty, bo oszczędza to czas i zapobiega powtarzaniu tych samych błędów. To też buduje wiedzę zespołu o ograniczeniach danych i modeli.
+8. Backend store trzyma metadane (eksperymenty, runy, parametry, metryki, tagi) w plikach lub bazie SQL. Artifact store trzyma duże pliki (modele, wykresy, raporty) na dysku lub w magazynie obiektowym (S3, MinIO).
+9. Pruner porównuje wyniki pośrednie próby z innymi próbami na tym samym kroku. Bez `trial.report` nie ma czego porównać, więc `should_prune()` zawsze zwraca `False`.
+10. Różnica (0.003) jest dużo mniejsza od odchylenia standardowego, więc najpewniej nieistotna (warto potwierdzić sparowanym testem). Wybieramy model prostszy, tańszy lub szybszy, albo kierujemy się metryką biznesową i ograniczeniami wdrożeniowymi.
+11. Wpływ learning rate zależy od rzędu wielkości, a nie od wartości bezwzględnej. Próbkowanie liniowe na [0.0001, 0.3] prawie nigdy nie sprawdziłoby wartości poniżej 0.01.
+12. Autolog jest szybki i niczego nie pomija z parametrów modelu, ale loguje dużo szumu i nie zna kontekstu (wersja danych, metryki biznesowe, metryki testowe). Najlepiej łączyć oba podejścia.
 
 
 ---
@@ -793,6 +1255,8 @@ with mlflow.start_run(run_name="failed-experiment", tags={"status": "failed"}):
 - **Optuna** automatyzuje poszukiwanie optymalnych hiperparametrów (TPE, pruning).
 - Dobra organizacja eksperymentów (nazewnictwo, tagi, hierarchia) oszczędza czas w przyszłości.
 - Pamiętaj o różnicy między metrykami ML a metrykami biznesowymi.
+- Różnice między runami weryfikuj statystycznie (CV z wieloma foldami, bootstrap) – przy remisie wybieraj model prostszy.
+- Architektura MLflow rozdziela metadane (backend store) od artefaktów (artifact store), co pozwala skalować tracking od laptopa do zespołu.
 
 ## Literatura i zasoby
 

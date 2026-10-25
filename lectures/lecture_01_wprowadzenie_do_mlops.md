@@ -118,6 +118,32 @@ Wniosek dla MLOps: **wersjonować trzeba trzy rzeczy – kod, dane i model** (or
 
 *Changing Anything Changes Everything* (Sculley i in., 2015): w modelu cechy są splątane – zmiana skalowania jednej cechy, dodanie nowej kolumny czy zmiana hiperparametru może zmienić wagi wszystkich pozostałych cech. Dlatego w ML nie ma „małych, izolowanych zmian” – każda zmiana wymaga ponownej ewaluacji.
 
+#### Katalog typowych źródeł długu technicznego w ML
+
+Sculley i in. opisują kilka powtarzalnych anty-wzorców. Warto je znać z nazwy, bo pojawiają się w niemal każdym projekcie:
+
+| Anty-wzorzec | Na czym polega | Objaw w praktyce | Przeciwdziałanie |
+|---|---|---|---|
+| **Glue code** | dużo kodu „sklejającego” dane z biblioteką ML | 90% repozytorium to konwersje formatów | wspólne interfejsy, gotowe komponenty pipeline'u |
+| **Pipeline jungles** | narosłe, nieudokumentowane skrypty przetwarzania | nikt nie wie, w jakiej kolejności je uruchamiać | jawny DAG (Airflow, KFP, DVC) |
+| **Dead experimental codepaths** | flagi i gałęzie po starych eksperymentach | `if USE_FEATURE_V2_OLD:` w kodzie produkcyjnym | regularne sprzątanie, eksperymenty poza kodem produkcyjnym |
+| **Undeclared consumers** | inne systemy po cichu czytają predykcje modelu | zmiana modelu psuje niezwiązany system | kontrola dostępu, kontrakty API |
+| **Unstable data dependencies** | cecha pochodzi z tabeli, którą ktoś inny zmienia | nagły spadek jakości bez zmian w kodzie | wersjonowanie danych, walidacja schematu |
+| **Underutilized data dependencies** | cechy prawie bezużyteczne, ale utrzymywane | koszt i ryzyko bez zysku | ablacja cech (*leave-one-feature-out*) |
+| **Configuration debt** | setki parametrów rozsianych po plikach | nie da się odtworzyć konfiguracji | jedna, wersjonowana konfiguracja (YAML + git) |
+
+```
+  Jupyter Notebook (dzień 1)            System po roku bez MLOps
+  ┌──────────────────────┐              ┌──────────────────────────────────┐
+  │ load → clean → fit   │   ───────▶   │ cron → skrypt_a.py → tmp.csv     │
+  │ → evaluate           │              │ skrypt_b_fix.py → model_new.pkl  │
+  └──────────────────────┘              │ „nie ruszać!” → serwis.py        │
+                                        │ ręczne kopiowanie na serwer      │
+                                        └──────────────────────────────────┘
+```
+
+> ⚠️ **Uwaga:** dług techniczny w ML rośnie „po cichu” – system nadal zwraca predykcje, nie rzuca wyjątków, tylko daje coraz gorsze wyniki. Dlatego w ML monitoring jest częścią definicji „działającego systemu”, a nie dodatkiem.
+
 ---
 
 ## 2. Cykl życia modelu ML
@@ -153,6 +179,51 @@ flowchart LR
 5. **Ewaluacja** – metryki ML (AUC, RMSE, F1) i metryki biznesowe.
 6. **Wdrożenie** – serwowanie predykcji (online/batch).
 7. **Monitoring** – czy model nadal działa poprawnie?
+
+### Artefakty i pytania kontrolne każdej fazy
+
+Każda faza powinna kończyć się **artefaktem**, który można wersjonować i przejrzeć. To właśnie artefakty łączą fazy w powtarzalny proces:
+
+| Faza | Artefakt wyjściowy | Pytanie, które trzeba zadać | Typowa pułapka |
+|---|---|---|---|
+| Definicja problemu | dokument z metryką sukcesu i baseline'em | czy ML jest w ogóle potrzebny? | brak prostego baseline'u (reguła, średnia) |
+| Zbieranie danych | snapshot danych + wersja (np. hash DVC) | czy dane z treningu będą dostępne na produkcji? | użycie cech niedostępnych w chwili predykcji |
+| Przygotowanie danych | kod transformacji + raport walidacji | czy podział train/test respektuje czas? | *data leakage* (np. skalowanie przed podziałem) |
+| Trening | model + parametry + metryki (MLflow) | czy wynik da się odtworzyć? | brak seeda, brak zapisu konfiguracji |
+| Ewaluacja | raport metryk, analiza błędów per segment | czy model jest lepszy od produkcyjnego? | jedna metryka globalna ukrywa słabe segmenty |
+| Wdrożenie | obraz Docker / endpoint / wpis w rejestrze | czy preprocessing jest identyczny jak w treningu? | train/serve skew |
+| Monitoring | dashboardy, alerty, logi predykcji | co zrobimy, gdy alert się zapali? | alerty bez właściciela i procedury |
+
+### Metryka ML a metryka biznesowa
+
+Model optymalizuje funkcję straty, a firma – wynik biznesowy. Te dwie rzeczy są powiązane, ale **nie są tym samym**:
+
+```mermaid
+flowchart LR
+    A["Funkcja straty\nlog loss"] --> B["Metryka offline\nAUC, F1, RMSE"]
+    B --> C["Metryka online\nCTR, konwersja"]
+    C --> D["Metryka biznesowa\nprzychód, churn"]
+```
+
+**Przykład:** model churnu ma AUC 0.89, ale kampania retencyjna nic nie daje, bo model najlepiej wskazuje klientów, którzy *i tak* odejdą (np. przeprowadzają się za granicę). Lepszą metryką byłby *uplift* – o ile zmniejsza się churn po kontakcie.
+
+> 💡 **Dobra praktyka:** zanim zaczniesz trenować model, zapisz (1) metrykę offline, (2) metrykę biznesową, (3) baseline bez ML i (4) próg, poniżej którego model nie zostanie wdrożony. To później staje się bramką jakości w pipeline'ie.
+
+### Dwie pętle: eksperymentalna i produkcyjna
+
+```
+   PĘTLA EKSPERYMENTALNA (Data Scientist)         PĘTLA PRODUKCYJNA (system)
+   ┌───────────────────────────────┐              ┌────────────────────────────┐
+   │ hipoteza → cechy → trening    │   wybrany    │ nowe dane → pipeline       │
+   │    ▲                  │       │   model +    │ → walidacja → trening      │
+   │    └──── analiza ◀────┘       │ ───────────▶ │ → bramka jakości → deploy  │
+   │  (godziny, ręcznie, notebook) │   pipeline   │ → monitoring ──┐           │
+   └───────────────────────────────┘              │      ▲         │ (automat) │
+                                                  │      └─retrain─┘           │
+                                                  └────────────────────────────┘
+```
+
+Celem MLOps jest to, by **wynikiem pracy eksperymentalnej był pipeline, a nie pojedynczy plik modelu**. Wtedy pętla produkcyjna może sama odtwarzać model na nowych danych.
 
 ---
 
@@ -207,6 +278,24 @@ graph LR
 | Czy możecie odtworzyć model sprzed 3 miesięcy? | Nie | Tak (DVC/MLflow) | Tak + pełny audit trail |
 | Ile czasu zajmuje wdrożenie nowego modelu? | Dni–tygodnie | Godziny | Minuty |
 | Kto monitoruje model w produkcji? | Nikt | Zespół ML | Automatyczny system |
+| Co jest artefaktem wdrożenia? | plik `.pkl` | pipeline treningowy | pipeline + kod CI/CD + testy |
+| Jak wygląda rollback? | „poszukajmy starego pliku” | ręczna zmiana wersji w rejestrze | automatyczny, po przekroczeniu progu |
+
+### Jak przejść z Level 0 do Level 1 – minimalna ścieżka
+
+Nie trzeba od razu budować platformy. Rozsądna kolejność kroków (każdy daje osobną wartość):
+
+```mermaid
+flowchart LR
+    S1["1. Kod w git\nzamiast notebooka"] --> S2["2. Seed i config\nw pliku YAML"]
+    S2 --> S3["3. Experiment\ntracking MLflow"]
+    S3 --> S4["4. Wersjonowanie\ndanych DVC"]
+    S4 --> S5["5. Pipeline\nz krokami"]
+    S5 --> S6["6. Model Registry\ni bramka jakości"]
+    S6 --> S7["7. Monitoring\ni retrening"]
+```
+
+> ⚠️ **Pułapka:** wdrażanie Kubernetesa i Kubeflow w zespole, który nie ma jeszcze kodu w repozytorium ani zapisanych eksperymentów. Narzędzia z wyższego poziomu nie naprawią braków z niższego.
 
 
 ### Pętle sprzężenia zwrotnego (feedback loops)
@@ -261,6 +350,55 @@ experiment_config = {
 }
 ```
 
+
+#### Źródła niedeterminizmu
+
+Seed to tylko jeden element. Pełna reprodukowalność wymaga kontroli wszystkich poniższych źródeł:
+
+| Źródło | Przykład | Jak kontrolować |
+|---|---|---|
+| Losowość algorytmu | inicjalizacja wag, bootstrap w RF | `random_state`, `np.random.default_rng(seed)`, `torch.manual_seed` |
+| Podział danych | `train_test_split` bez seeda | stały seed lub zapis indeksów podziału |
+| Dane | tabela nadpisana nowymi rekordami | snapshot + hash (DVC), `data_version` |
+| Kod | niezacommitowane zmiany | zapis `git commit hash` w metadanych eksperymentu |
+| Środowisko | inna wersja scikit-learn | `requirements.txt` z przypiętymi wersjami, Docker |
+| Sprzęt | operacje GPU (cuDNN), wielowątkowość | flagi deterministyczne, akceptacja małej tolerancji |
+| Kolejność danych | `SELECT` bez `ORDER BY` | jawne sortowanie |
+
+Przykład zapisania „odcisku palca” eksperymentu – wersji danych, kodu i środowiska:
+
+```python
+import hashlib
+import json
+import platform
+import subprocess
+
+import sklearn
+
+def file_hash(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()[:12]
+
+def git_commit() -> str:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+    except Exception:
+        return "unknown"
+
+fingerprint = {
+    "data_hash": file_hash("data/train.csv"),
+    "git_commit": git_commit(),
+    "python": platform.python_version(),
+    "sklearn": sklearn.__version__,
+    "seed": 42,
+}
+print(json.dumps(fingerprint, indent=2))
+```
+
+> 💡 **Reguła:** jeśli z metadanych eksperymentu nie da się odpowiedzieć na pytanie „jakie dane, jaki kod, jakie parametry, jakie środowisko?”, eksperyment nie jest reprodukowalny – nawet gdy seed był ustawiony.
 
 > **▶️ Demo na żywo:** `python lectures/scripts/lecture_01/01_reproducibility.py`  
 > **Kiedy:** na koniec sekcji 4.1, przed przejściem do dryftu.  
@@ -364,8 +502,35 @@ graph LR
         A1[Cechy X] -->|stara relacja| B1[Etykieta Y]
     end
     subgraph "Po dryfcie"
-        A2[Cechy X] -->|nowa relacja| B2[Etykieta Y']
+        A2[Cechy X] -->|nowa relacja| B2["Etykieta Y'"]
     end
+```
+
+#### Dlaczego concept drift jest trudniejszy do wykrycia?
+
+Przy concept drift rozkład cech $P(X)$ może pozostać **identyczny** – test KS na cechach nic nie pokaże. Zmienia się jedynie odpowiedź, którą „świat” przypisuje tym samym cechom. Wykryć to można tylko porównując predykcje z prawdziwymi etykietami, a te często przychodzą z opóźnieniem (*label delay*):
+
+| Domena | Opóźnienie etykiety | Konsekwencja |
+|---|---|---|
+| Rekomendacje (kliknięcie) | sekundy–minuty | szybka reakcja możliwa |
+| Fraud kartowy (chargeback) | tygodnie | trzeba polegać na proxy (rozkład predykcji, reguły) |
+| Scoring kredytowy (default) | miesiące–lata | monitoring głównie pośredni, okresowe backtesty |
+
+Przykład minimalny – ten sam $X$, przesunięty próg decyzji:
+
+```python
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+
+rng = np.random.default_rng(42)
+X = rng.normal(0, 1, (2000, 1))
+y_old = (X[:, 0] > 0).astype(int)      # stara reguła
+y_new = (X[:, 0] > 1).astype(int)      # nowa reguła (np. zaostrzone kryteria)
+
+model = LogisticRegression().fit(X, y_old)
+print("accuracy przed:", (model.predict(X) == y_old).mean())   # ≈ 1.0
+print("accuracy po:   ", (model.predict(X) == y_new).mean())   # ≈ 0.66
+# Rozkład X się nie zmienił, więc test KS na cechach nie wykryje problemu.
 ```
 
 
@@ -421,6 +586,54 @@ print(f"duży dryft:   {psi(ref, rng.normal(0.5, 1.2, 5000)):.3f}")
 Reguła kciuka: **PSI < 0.1** – brak istotnej zmiany, **0.1–0.25** – umiarkowana (obserwuj), **> 0.25** – istotna zmiana (rozważ retrening).
 
 > **Uwaga:** przy bardzo dużych próbkach testy statystyczne (KS) wykrywają nawet nieistotne biznesowo różnice (p-value → 0). Dlatego w praktyce łączy się p-value z miarą wielkości efektu (statystyka KS, PSI, odległość Wassersteina).
+
+#### Porównanie metod wykrywania dryftu
+
+| Metoda | Typ cechy | Wymaga etykiet? | Zalety | Wady |
+|---|---|---|---|---|
+| Test KS | numeryczna | nie | prosty, nieparametryczny | nadwrażliwy przy dużych n |
+| Test χ² | kategoryczna | nie | standard dla kategorii | problem z rzadkimi kategoriami |
+| PSI | numeryczna i kategoryczna | nie | interpretowalne progi | zależy od doboru binów |
+| Odległość Wassersteina | numeryczna | nie | mierzy „ile” przesunięcia, w jednostkach cechy | brak naturalnego progu |
+| Rozkład predykcji | wyjście modelu | nie | jeden sygnał zamiast setek cech | nie wskazuje przyczyny |
+| Metryki jakości (AUC, F1) | – | tak | mierzy to, co naprawdę ważne | opóźnienie etykiet |
+
+> ⚠️ **Pułapka wielokrotnych testów:** przy 200 cechach i progu p < 0.05 średnio ~10 cech „wykaże dryft” przypadkiem. Stosuj korektę (np. Bonferroni), monitoruj najważniejsze cechy lub alertuj dopiero przy dryfcie w kilku kolejnych oknach.
+
+### 4.5 Train/serve skew i data leakage
+
+Dwa błędy, które powodują, że model **świetny offline okazuje się słaby online** – choć nie ma żadnego dryftu:
+
+| | Train/serve skew | Data leakage |
+|---|---|---|
+| Istota | cechy liczone inaczej w treningu i na produkcji | w treningu model widzi informację niedostępną w chwili predykcji |
+| Przykład | `dochód` w treningu w zł, w API w groszach | cecha `liczba_monitów` powstaje dopiero *po* opóźnieniu w spłacie |
+| Objaw | spadek jakości od pierwszego dnia wdrożenia | podejrzanie wysokie metryki offline (AUC 0.99) |
+| Zapobieganie | jedna implementacja cech (Feature Store, wspólny `Pipeline`) | podział czasowy, analiza „kiedy cecha jest znana” |
+
+Klasyczny leakage w preprocessingu i jego poprawka:
+
+```python
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+
+X, y = make_classification(n_samples=1000, random_state=42)
+
+# ŹLE: scaler widzi dane testowe (średnia i odchylenie z całego zbioru)
+X_scaled = StandardScaler().fit_transform(X)
+X_tr, X_te, y_tr, y_te = train_test_split(X_scaled, y, random_state=42)
+
+# DOBRZE: preprocessing jest częścią modelu - ten sam obiekt trafia na produkcję
+X_tr, X_te, y_tr, y_te = train_test_split(X, y, random_state=42)
+model = make_pipeline(StandardScaler(), LogisticRegression())
+model.fit(X_tr, y_tr)
+print(f"accuracy: {model.score(X_te, y_te):.3f}")
+```
+
+> 💡 Zapisanie całego `Pipeline` (preprocessing + model) jako jednego artefaktu to najprostszy sposób na uniknięcie train/serve skew w małych projektach.
 
 ---
 
@@ -478,6 +691,35 @@ graph TB
 
 > 💡 **W praktyce:** warto definiować dla każdego komponentu właściciela, SLA/SLO oraz minimalny zestaw metryk. Dzięki temu architektura MLOps jest nie tylko kompletna technicznie, ale też operacyjnie utrzymywalna.
 
+### Online vs batch serving – porównanie
+
+| Kryterium | Online (REST/gRPC) | Batch |
+|---|---|---|
+| Opóźnienie | milisekundy | minuty–godziny |
+| Przykład | wykrywanie fraudu przy płatności | nocny scoring churnu dla całej bazy |
+| Cechy | z online store, liczone w locie | z hurtowni danych |
+| Skalowanie | autoskalowanie replik | zasoby na czas zadania |
+| Typowe ryzyko | latencja, dostępność, skew | nieaktualne predykcje |
+| Monitoring | latencja p95/p99, błędy HTTP | czas zadania, liczba rekordów |
+
+Przepływ pojedynczego żądania predykcji online:
+
+```mermaid
+sequenceDiagram
+    participant App as Aplikacja
+    participant API as Serwis modelu
+    participant FS as Feature Store online
+    participant Log as Log predykcji
+    App->>API: POST predict z id klienta
+    API->>FS: pobierz cechy klienta
+    FS-->>API: wektor cech
+    API->>API: preprocessing i predykcja
+    API->>Log: zapisz wejście, wynik, wersję modelu
+    API-->>App: wynik i wersja modelu
+```
+
+> ⚠️ **Często pomijane:** logowanie wejść, predykcji i **wersji modelu** dla każdego żądania. Bez tych logów nie da się później policzyć metryk po nadejściu etykiet, wykryć dryftu ani zbadać incydentu.
+
 ---
 
 ## 6. Kluczowe narzędzia ekosystemu MLOps
@@ -531,6 +773,26 @@ graph TD
 - **Metryki ML** jako warunek wdrożenia
 - **Automatyczny retraining** po wykryciu driftu
 - **Explainability** – wyjaśnialność predykcji
+
+### CI, CD i CT
+
+W MLOps do klasycznej pary CI/CD dochodzi trzeci element – **CT (Continuous Training)**:
+
+| Praktyka | DevOps | MLOps |
+|---|---|---|
+| **CI** – Continuous Integration | testy kodu, build | + testy danych, walidacja schematu, testy komponentów pipeline'u |
+| **CD** – Continuous Delivery | wdrożenie aplikacji | wdrożenie **pipeline'u treningowego** oraz serwisu predykcji |
+| **CT** – Continuous Training | – | automatyczny retrening na nowych danych z bramką jakości |
+
+| Aspekt | DevOps | MLOps |
+|---|---|---|
+| Wyzwalacz zmiany | commit w kodzie | commit **lub** nowe dane **lub** alert dryftu |
+| Artefakt | binarka, obraz Docker | obraz + model + metadane danych |
+| Kryterium „gotowe do wdrożenia” | testy przechodzą | testy + metryki ≥ próg + porównanie z modelem produkcyjnym |
+| Strategia wdrożenia | blue-green, canary | + shadow deployment, testy A/B |
+| Rollback | poprzednia wersja kodu | poprzednia wersja modelu z rejestru |
+
+> 💡 **Shadow deployment:** nowy model otrzymuje kopię ruchu produkcyjnego i liczy predykcje, ale ich nie zwraca użytkownikom. Pozwala porównać modele na prawdziwych danych bez ryzyka.
 
 ---
 
@@ -627,6 +889,43 @@ print(f"Metryki: {prod.metrics}")
 > **Kiedy:** po przykładzie z sekcji 8, jako jego rozbudowana, działająca wersja.  
 > **Co pokazać:** modele v1 i v2 trafiają na produkcję, a słabszy v3 zostaje w `staging` (bramka jakości). Następnie pokaż plik `outputs/model_registry/registry.json` i zapowiedz, że w wykładzie 3 tę samą rolę pełni MLflow Model Registry.
 
+### Bramka jakości (quality gate)
+
+W przykładzie powyżej `promote_to_production` promuje model bezwarunkowo. W prawdziwym systemie promocja powinna być decyzją opartą na regułach. Cykl życia wersji modelu:
+
+```mermaid
+stateDiagram-v2
+    [*] --> staging: register
+    staging --> production: bramka jakości OK
+    staging --> archived: odrzucony
+    production --> archived: zastąpiony nowszym
+    archived --> production: rollback
+```
+
+Przykładowa bramka, którą można dołożyć do `SimpleModelRegistry`:
+
+```python
+def passes_quality_gate(candidate: ModelVersion,
+                        current: Optional[ModelVersion],
+                        min_auc: float = 0.80,
+                        min_improvement: float = 0.01) -> bool:
+    """Model trafia na produkcję tylko, jeśli spełnia próg i jest lepszy od obecnego."""
+    if candidate.metrics.get("auc", 0.0) < min_auc:
+        return False
+    if current is None:
+        return True
+    return candidate.metrics["auc"] >= current.metrics["auc"] + min_improvement
+
+candidate = ModelVersion("churn_predictor", "3.0.0", {"auc": 0.87, "f1": 0.80}, "data-2024-09")
+registry.register(candidate)
+if passes_quality_gate(candidate, registry.get_production_model("churn_predictor")):
+    registry.promote_to_production("churn_predictor", "3.0.0")
+else:
+    print("⛔ v3.0.0 zostaje w staging – nie przeszedł bramki jakości")
+```
+
+> ⚠️ **Pułapka:** porównywanie modeli na **różnych** zbiorach testowych. AUC nowego modelu na danych z września i starego na danych ze stycznia nie są porównywalne – oba modele trzeba ocenić na tym samym, aktualnym zbiorze.
+
 
 ### Testowanie systemów ML – piramida testów
 
@@ -688,6 +987,26 @@ Wdrożenie MLOps wymaga współpracy wielu specjalistów:
 
 > 💡 **Wskazówka:** W małych zespołach jedna osoba często pełni kilka ról. Kluczowe jest, aby **każda z tych odpowiedzialności była pokryta**, nawet jeśli przez tę samą osobę.
 
+### Kto za co odpowiada? (macierz RACI)
+
+R – wykonuje, A – odpowiada za wynik, C – konsultowany, I – informowany.
+
+| Zadanie | Data Scientist | ML Engineer | Data Engineer | Platform Engineer | Product Manager |
+|---|---|---|---|---|---|
+| Definicja metryki sukcesu | C | I | I | I | **A/R** |
+| Pipeline danych i jakość danych | C | C | **A/R** | I | I |
+| Eksperymenty i wybór modelu | **A/R** | C | I | I | C |
+| Pipeline treningowy i serwowanie | C | **A/R** | C | C | I |
+| Infrastruktura i CI/CD | I | C | I | **A/R** | I |
+| Reakcja na alert dryftu | R | **A** | R | C | I |
+
+### Case study: Zillow Offers – koszt braku kontroli nad modelem
+
+W 2021 r. Zillow zamknął biznes skupu mieszkań (*Zillow Offers*), raportując straty rzędu kilkuset milionów dolarów i redukcję ok. 25% personelu. Model wyceny nieruchomości był używany do automatycznego składania ofert zakupu w okresie gwałtownych zmian rynku. Wnioski dla MLOps (w uproszczeniu):
+- model działający dobrze na danych historycznych nie nadążał za szybką zmianą rynku (**concept drift**),
+- decyzje modelu bezpośrednio wpływały na rynek i na przyszłe dane (**pętla sprzężenia zwrotnego**),
+- brakowało wystarczających mechanizmów ograniczania ryzyka (limity, nadzór człowieka, szybka reakcja na sygnały z monitoringu).
+
 ---
 
 ## Pytania kontrolne i do dyskusji
@@ -699,6 +1018,11 @@ Wdrożenie MLOps wymaga współpracy wielu specjalistów:
 5. Dlaczego sam kod modelu stanowi tylko ~5% całego systemu ML? Co stanowi pozostałe 95%?
 6. Jakie korzyści daje Feature Store w porównaniu z sytuacją, gdy każdy Data Scientist oblicza cechy samodzielnie?
 7. **Dyskusja:** Czy każdy projekt ML potrzebuje pełnego MLOps (Level 2)? Kiedy Level 0 jest wystarczający?
+8. Wymień co najmniej cztery źródła niedeterminizmu w treningu modelu poza brakiem seeda.
+9. Czym różni się train/serve skew od data leakage? Jak każdy z nich objawia się w metrykach?
+10. Dlaczego concept drift nie zostanie wykryty przez test KS na cechach wejściowych?
+11. Czym jest Continuous Training i czym różni się od Continuous Delivery?
+12. Dlaczego bramka jakości powinna porównywać kandydata z modelem produkcyjnym na tym samym zbiorze testowym?
 
 
 ### Proponowane odpowiedzi
@@ -710,6 +1034,11 @@ Wdrożenie MLOps wymaga współpracy wielu specjalistów:
 5. Bo produkcyjny system ML wymaga infrastruktury: zbierania i walidacji danych, feature engineeringu, treningu, rejestru modeli, serwowania, monitoringu, alertingu, CI/CD i zarządzania zasobami. Kod modelu jest tylko jednym z elementów tego łańcucha.
 6. Feature Store daje jedną, spójną definicję cech dla treningu i inferencji, więc zmniejsza training-serving skew. Dodatkowo ogranicza duplikację pracy, poprawia reużywalność i upraszcza governance oraz audyt.
 7. Nie każdy projekt potrzebuje od razu Level 2. Level 0 bywa wystarczający dla PoC, prototypu lub małego projektu o niskim ryzyku i krótkim horyzoncie. Gdy rośnie skala, częstotliwość zmian i koszt błędów, warto przejść co najmniej do Level 1, a docelowo Level 2.
+8. Losowy podział danych, zmiana danych źródłowych (brak snapshotu), niezacommitowany kod, inne wersje bibliotek, niedeterministyczne operacje GPU i wielowątkowość, kolejność wierszy zwracanych przez zapytanie SQL.
+9. Train/serve skew to różna implementacja cech w treningu i na produkcji – metryki offline są dobre, a online od pierwszego dnia gorsze. Data leakage to użycie w treningu informacji niedostępnej w chwili predykcji – metryki offline są nienaturalnie wysokie, a na produkcji spadają.
+10. Bo przy concept drift zmienia się $P(y \mid X)$, a rozkład $P(X)$ może pozostać taki sam. Test KS porównuje tylko rozkłady cech, więc nie widzi zmiany relacji z etykietą – do tego potrzebne są etykiety i metryki jakości.
+11. CT to automatyczne ponowne trenowanie modelu na nowych danych (wyzwalane harmonogramem, nowymi danymi lub alertem). CD dotyczy wdrażania oprogramowania – w MLOps wdrażany jest pipeline treningowy i serwis, a CT ten pipeline uruchamia.
+12. Bo metryki policzone na różnych danych odzwierciedlają różnice w danych, a nie w modelach. Uczciwe porównanie wymaga wspólnego, aktualnego zbioru ewaluacyjnego.
 
 
 ---
@@ -718,6 +1047,8 @@ Wdrożenie MLOps wymaga współpracy wielu specjalistów:
 
 - **MLOps** to praktyki łączące ML, inżynierię oprogramowania i operacje IT.
 - Główne wyzwania: reprodukowalność, data drift, concept drift, skalowalność.
+- Model świetny offline, a słaby online, to najczęściej train/serve skew lub data leakage – nie dryft.
+- Oprócz CI/CD w MLOps występuje **CT** – ciągły retrening z bramką jakości.
 - Trzy poziomy dojrzałości: ręczny → automatyzacja treningu → pełne CI/CD.
 - Kluczowe komponenty: Feature Store, Experiment Tracking, Model Registry, Monitoring.
 - Sam kod modelu to ~5% systemu — reszta to infrastruktura, dane i procesy.

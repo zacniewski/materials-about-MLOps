@@ -57,6 +57,52 @@ flowchart LR
     ETL --> DL --> DW --> FS
 ```
 
+### 1.1. Ile pracy w ML to praca z danymi?
+
+W badaniach i ankietach branżowych regularnie powtarza się obserwacja, że przygotowanie danych zajmuje większość czasu projektu ML, a sam kod modelu to niewielki fragment całego systemu (por. Sculley i in., *Hidden Technical Debt in Machine Learning Systems*, NeurIPS 2015).
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    System ML na produkcji                        │
+│  ┌────────────┐ ┌─────────────┐ ┌───────────┐ ┌───────────────┐  │
+│  │ Zbieranie  │ │ Weryfikacja │ │ Ekstrakcja│ │ Zarządzanie   │  │
+│  │ danych     │ │ danych      │ │ cech      │ │ zasobami      │  │
+│  └────────────┘ └─────────────┘ └───────────┘ └───────────────┘  │
+│  ┌────────────┐      ┌──────┐      ┌───────────┐ ┌───────────┐   │
+│  │ Konfigur.  │      │ KOD  │      │ Serving   │ │ Monitoring│   │
+│  │            │      │  ML  │      │           │ │           │   │
+│  └────────────┘      └──────┘      └───────────┘ └───────────┘   │
+└──────────────────────────────────────────────────────────────────┘
+        mały prostokąt „KOD ML” otoczony infrastrukturą danych
+```
+
+### 1.2. Cykl życia danych w systemie ML
+
+```mermaid
+flowchart LR
+    A[Generowanie] --> B[Pozyskanie]
+    B --> C[Przechowywanie]
+    C --> D[Transformacja]
+    D --> E[Udostępnienie]
+    E --> F[Trening i inferencja]
+    F --> G[Logi predykcji]
+    G -->|pętla sprzężenia| B
+```
+
+Pętla zwrotna jest kluczowa: predykcje modelu i reakcje użytkowników stają się nowymi danymi treningowymi. To źródło zarówno ciągłego uczenia się, jak i ryzyka (np. *feedback loop* – system rekomendacji uczy się na danych, które sam ukształtował).
+
+### 1.3. Role w zespole danych
+
+| Rola | Główna odpowiedzialność | Typowe narzędzia |
+|---|---|---|
+| Data Engineer | pipeline'y, magazyny danych, jakość i dostępność | Spark, Airflow, dbt, Kafka |
+| Analytics Engineer | modele danych w hurtowni, metryki biznesowe | dbt, SQL, Looker |
+| Data Scientist | eksploracja, cechy, modele | pandas, sklearn, notebooks |
+| ML Engineer | produkcyjne pipeline'y ML, serving | MLflow, Feast, Docker, K8s |
+| Data Steward / Owner | definicje, własność, zgodność z regulacjami | katalogi danych, DataHub |
+
+> 💡 **Data-centric AI** (A. Ng): zamiast w nieskończoność stroić architekturę modelu, często więcej zyskujemy, systematycznie poprawiając dane – etykiety, pokrycie przypadków brzegowych, spójność definicji.
+
 ---
 
 ## 2. Architektura danych: Data Lake vs Data Warehouse
@@ -114,6 +160,79 @@ Zaleta dla ML: gdy zmienimy logikę feature engineeringu, możemy **odtworzyć**
 | Operacje | wiele małych zapisów/odczytów | duże skany i agregacje |
 | Układ danych | wierszowy | kolumnowy |
 | Rola w ML | źródło danych, online serving | trening, analityka, feature engineering |
+
+### Porównanie zbiorcze: Lake vs Warehouse vs Lakehouse
+
+| Kryterium | Data Lake | Data Warehouse | Data Lakehouse |
+|---|---|---|---|
+| Typy danych | dowolne: tabele, tekst, obrazy, audio | ustrukturyzowane | dowolne + tabele z ACID |
+| Schemat | schema-on-read | schema-on-write | schema-on-write z ewolucją |
+| Transakcje ACID | brak | tak | tak (warstwa metadanych) |
+| Koszt przechowywania | niski (object storage) | wyższy | niski |
+| Wydajność SQL | słaba bez dodatków | bardzo dobra | dobra |
+| Time travel | brak | zależnie od produktu | tak (wersje snapshotów) |
+| Typowe użycie w ML | dane nieustrukturyzowane do DL | cechy tabelaryczne, analityka | jedno źródło dla BI i ML |
+
+### Jak działa Lakehouse? Otwarte formaty tabel
+
+Lakehouse to w praktyce pliki Parquet w object storage **plus dziennik transakcji** (metadane), który mówi, które pliki tworzą daną wersję tabeli. Najpopularniejsze implementacje: **Delta Lake**, **Apache Iceberg**, **Apache Hudi**.
+
+```
+s3://lake/silver/orders/
+├── _delta_log/
+│   ├── 00000000000000000000.json   ← wersja 0: dodano part-0001, part-0002
+│   ├── 00000000000000000001.json   ← wersja 1: usunięto part-0002, dodano part-0003
+│   └── 00000000000000000002.json   ← wersja 2: MERGE (upsert)
+├── part-0001.snappy.parquet
+├── part-0002.snappy.parquet        ← logicznie usunięty, fizycznie do VACUUM
+└── part-0003.snappy.parquet
+```
+
+Dzięki temu możliwe są: atomowe zapisy, `MERGE`/`UPDATE`/`DELETE` (ważne np. dla RODO – prawo do usunięcia danych), **time travel** (odczyt tabeli w wersji, na której trenowano model) i ewolucja schematu.
+
+```python
+# Delta Lake + PySpark: odczyt tabeli w stanie z dnia treningu
+df_train = (spark.read.format("delta")
+            .option("timestampAsOf", "2024-01-15")
+            .load("s3://lake/gold/churn_features"))
+```
+
+> 💡 Time travel w Lakehouse i DVC (sekcja 8) rozwiązują ten sam problem – **odtwarzalność danych treningowych** – na różnych skalach: DVC dla plików w repozytorium projektu, formaty tabel dla dużych współdzielonych tabel.
+
+> ⚠️ **Pułapka: Data Swamp (bagno danych).** Data Lake bez katalogu, właścicieli, opisu schematów i polityk retencji szybko zamienia się w zbiór plików, których nikt nie rozumie i nikt nie odważy się usunąć. Minimum: katalog danych (np. Glue Catalog, DataHub, Unity Catalog), konwencja nazw ścieżek, właściciel każdego zbioru.
+
+### Modelowanie danych w hurtowni: schemat gwiazdy
+
+Hurtownie często organizuje się w **tabelę faktów** (zdarzenia, liczby) i **tabele wymiarów** (opis encji). Z tego układu wyprowadza się cechy ML.
+
+```mermaid
+erDiagram
+    FACT_ORDERS }o--|| DIM_CUSTOMER : customer_id
+    FACT_ORDERS }o--|| DIM_PRODUCT : product_id
+    FACT_ORDERS }o--|| DIM_DATE : date_id
+    FACT_ORDERS {
+        int order_id
+        int customer_id
+        int product_id
+        int date_id
+        float amount
+    }
+    DIM_CUSTOMER {
+        int customer_id
+        string segment
+        date valid_from
+        date valid_to
+    }
+```
+
+Kolumny `valid_from`/`valid_to` to **SCD typu 2** (*Slowly Changing Dimension*): zamiast nadpisywać np. segment klienta, dodajemy nowy wiersz z zakresem ważności. Dla ML to ogromna wartość – pozwala odtworzyć, jaki segment miał klient w chwili zdarzenia (point-in-time correctness, sekcja 7).
+
+| Typ SCD | Zachowanie przy zmianie | Historia | Przydatność dla ML |
+|---|---|---|---|
+| Typ 0 | wartość nigdy się nie zmienia | — | tylko atrybuty stałe |
+| Typ 1 | nadpisanie | brak | ryzyko wycieku z przyszłości |
+| Typ 2 | nowy wiersz + zakres dat | pełna | zalecany |
+| Typ 3 | dodatkowa kolumna „poprzednia wartość” | jeden krok | ograniczona |
 
 ---
 
@@ -173,6 +292,88 @@ print(f"\nOdczyt 2 kolumn z Parquet: {time.time()-t0:.3f}s")
 > **▶️ Demo na żywo:** `python lectures/scripts/lecture_02/01_csv_vs_parquet.py --rows 1000000`  
 > **Kiedy:** po omówieniu tabeli porównawczej formatów.  
 > **Co pokazać:** Parquet jest kilkukrotnie mniejszy, odczyt dwóch kolumn jest wielokrotnie szybszy, a CSV gubi typy `datetime` i `category`.
+
+### Układ wierszowy vs kolumnowy
+
+```
+Tabela:   id | age | income | churn
+          1  | 25  | 5000   | 0
+          2  | 41  | 7200   | 1
+          3  | 33  | 6100   | 0
+
+Wierszowo (CSV, Avro, OLTP):
+[1,25,5000,0][2,41,7200,1][3,33,6100,0]
+  → szybkie dopisanie/odczyt całego rekordu
+
+Kolumnowo (Parquet, ORC, OLAP):
+[1,2,3][25,41,33][5000,7200,6100][0,1,0]
+  → czytamy tylko potrzebne kolumny,
+  → podobne wartości obok siebie = lepsza kompresja
+```
+
+### Budowa pliku Parquet
+
+```
+plik.parquet
+├── Row group 1  (np. ~128 MB wierszy)
+│   ├── Column chunk: age     → strony + statystyki min/max, null_count
+│   ├── Column chunk: income
+│   └── Column chunk: churn
+├── Row group 2
+│   └── ...
+└── Footer: schemat, offsety, statystyki każdej kolumny w każdej grupie
+```
+
+Korzyści wynikające z budowy:
+- **Column pruning (projection pushdown)** – czytamy tylko wybrane kolumny.
+- **Predicate pushdown** – statystyki min/max w stopce pozwalają pominąć całe row groups (np. `age > 60`, gdy `max(age)=55`).
+- **Kodowanie słownikowe i RLE** – kolumny o małej liczbie unikalnych wartości (np. `country`) zajmują ułamek miejsca.
+- **Typy logiczne** – daty, decimale, listy, struktury zachowane bez parsowania tekstu.
+
+### Partycjonowanie danych
+
+```python
+import pandas as pd
+
+df = pd.DataFrame({
+    "event_date": pd.to_datetime(["2024-01-14", "2024-01-14", "2024-01-15"]),
+    "country": ["PL", "DE", "PL"],
+    "amount": [10.0, 25.5, 7.2],
+})
+df["date"] = df["event_date"].dt.strftime("%Y-%m-%d")
+
+# Zapis w układzie Hive: data/events/date=2024-01-14/country=PL/part-0.parquet
+df.to_parquet("data/events", partition_cols=["date", "country"], index=False)
+
+# Odczyt z filtrem – pyarrow czyta tylko pasujące katalogi (partition pruning)
+pl_15 = pd.read_parquet("data/events", filters=[("date", "=", "2024-01-15"),
+                                                ("country", "=", "PL")])
+```
+
+| Dobra praktyka | Dlaczego |
+|---|---|
+| Partycjonuj po kolumnie używanej w filtrach (zwykle data) | partition pruning, łatwy backfill jednej partycji |
+| Unikaj kolumn o dużej kardynalności (`user_id`) | miliony małych plików = problem *small files* |
+| Celuj w pliki 100 MB – 1 GB | balans między równoległością a narzutem metadanych |
+| Zapisuj schemat jawnie (`pyarrow.schema`) | brak niespodzianek typu `int` → `float` przy NaN |
+
+### Ewolucja schematu
+
+Schemat danych zmienia się w czasie: dochodzą kolumny, zmieniają się typy. Formaty ze schematem (Parquet, Avro) pozwalają tym zarządzać świadomie.
+
+| Zmiana | Zgodność wstecz | Komentarz |
+|---|---|---|
+| Dodanie kolumny opcjonalnej (nullable) | ✅ | starzy czytelnicy ją ignorują |
+| Usunięcie kolumny | ⚠️ | psuje konsumentów, którzy jej używają |
+| Zmiana nazwy kolumny | ❌ | dla czytelnika to usunięcie + dodanie |
+| Rozszerzenie typu `int32` → `int64` | ✅ zwykle | zależnie od formatu i silnika |
+| Zawężenie typu `float` → `int` | ❌ | utrata informacji |
+
+> ⚠️ **Pułapka CSV:** `pd.read_csv` zgaduje typy. Kod pocztowy `01-234` może być OK, ale `00123` zamieni się w liczbę `123`, identyfikatory z wiodącymi zerami stracą je, a kolumna `int` z jednym brakiem stanie się `float64`. Zawsze podawaj `dtype=` lub przejdź na Parquet.
+
+### Dane nieustrukturyzowane
+
+Dla obrazów, audio i tekstu w deep learningu stosuje się inne podejścia: miliony małych plików w object storage są wolne w odczycie, dlatego łączy się je w **shardy** (TFRecord, WebDataset `.tar`, formaty Lance/Mosaic MDS), a metadane (etykiety, ścieżki, podziały) trzyma w Parquet.
 
 ---
 
@@ -260,6 +461,96 @@ def churn_features():
 
 churn_features()
 ```
+
+### ETL vs ELT – porównanie
+
+| Kryterium | ETL | ELT |
+|---|---|---|
+| Miejsce transformacji | osobny silnik (Spark, Python, narzędzia ETL) | w hurtowni / lakehouse (SQL) |
+| Surowe dane | często tracone | zachowane |
+| Elastyczność | zmiana logiki = ponowna ekstrakcja | zmiana logiki = ponowne uruchomienie SQL |
+| Prywatność | łatwiej maskować przed załadowaniem | trzeba chronić surowe dane w magazynie |
+| Typowe narzędzia | Spark, Informatica, NiFi | Fivetran/Airbyte + dbt + Snowflake/BigQuery |
+| Kiedy | dane wrażliwe, ciężkie transformacje nie-SQL | nowoczesny stos w chmurze |
+
+### Ładowanie pełne vs przyrostowe vs CDC
+
+```mermaid
+flowchart TB
+    subgraph Full["Pełne ładowanie"]
+        F1[Cała tabela źródłowa] --> F2[Nadpisanie celu]
+    end
+    subgraph Inc["Przyrostowe"]
+        I1["Wiersze z updated_at > ostatni znacznik"] --> I2[Dopisanie lub MERGE]
+    end
+    subgraph CDC["Change Data Capture"]
+        C1[Log transakcji bazy] --> C2[Debezium] --> C3[Kafka] --> C4[Lake lub Warehouse]
+    end
+```
+
+| Strategia | Zalety | Wady |
+|---|---|---|
+| Full load | proste, zawsze spójne | drogie przy dużych tabelach |
+| Incremental (watermark kolumny) | tanie | nie widzi usunięć; wymaga wiarygodnego `updated_at` |
+| CDC (log bazy) | widzi INSERT/UPDATE/DELETE, niskie opóźnienie | złożona infrastruktura |
+
+### Przykład transformacji ELT w dbt
+
+```sql
+-- models/gold/customer_features.sql
+{{ config(materialized='incremental', unique_key=['customer_id', 'feature_date']) }}
+
+SELECT
+    customer_id,
+    DATE '{{ var("ds") }}'                         AS feature_date,
+    COUNT(*)                                       AS orders_30d,
+    AVG(amount)                                    AS avg_order_30d,
+    DATE_DIFF(DATE '{{ var("ds") }}', MAX(order_date), DAY) AS days_since_last_order
+FROM {{ ref('silver_orders') }}
+WHERE order_date <  DATE '{{ var("ds") }}'                 -- tylko przeszłość!
+  AND order_date >= DATE_SUB(DATE '{{ var("ds") }}', INTERVAL 30 DAY)
+GROUP BY customer_id
+```
+
+```yaml
+# models/gold/schema.yml – testy dbt jako bramka jakości
+models:
+  - name: customer_features
+    columns:
+      - name: customer_id
+        tests: [not_null]
+      - name: orders_30d
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0}
+```
+
+### Idempotentny zapis partycji w Pythonie
+
+```python
+import os
+import shutil
+import tempfile
+import pandas as pd
+
+def write_partition_atomically(df: pd.DataFrame, root: str, ds: str) -> None:
+    """Nadpisuje partycję date=ds w sposób idempotentny i atomowy."""
+    target = os.path.join(root, f"date={ds}")
+    tmp = tempfile.mkdtemp(dir=root, prefix=".tmp_")
+    df.to_parquet(os.path.join(tmp, "part-0.parquet"), index=False)
+    if os.path.exists(target):
+        shutil.rmtree(target)        # ponowne uruchomienie = ten sam wynik
+    os.rename(tmp, target)           # rename w obrębie FS jest atomowy
+```
+
+> ⚠️ **Pułapka: `datetime.now()` w zadaniu.** Zadanie liczące „ostatnie 30 dni względem teraz” da inny wynik przy backfillu i przy ponownym uruchomieniu. Zawsze parametryzuj zadanie **datą logiczną** (`ds`) przekazaną przez orkiestrator.
+
+### Porównanie orkiestratorów
+
+| | Airflow | Prefect | Dagster |
+|---|---|---|---|
+| Model | zadania (tasks) w DAG | przepływy Pythona (flows) | zasoby danych (assets) |
+| Mocne strony | dojrzałość, ogromna liczba integracji | prostota, dynamiczne przepływy | lineage danych, typowanie, testowalność |
+| Słabsze strony | cięższa infrastruktura | mniejszy ekosystem | krzywa uczenia pojęć |
 
 ---
 
@@ -386,6 +677,96 @@ def run_data_pipeline(input_path: str) -> tuple:
 > **Kiedy:** po omówieniu kodu z sekcji 5.  
 > **Co pokazać:** log czyszczenia (duplikaty, błędne dochody), raport klasyfikacji i predykcja z zapisanego pipeline'u. Podkreśl, że imputacja i skalowanie są dopasowywane tylko na zbiorze treningowym.
 
+### Przepływ danych przez pipeline – co jest „fitowane”, a co nie?
+
+```mermaid
+flowchart TB
+    RAW[Surowe dane] --> CLEAN["Czyszczenie regułowe\nbez uczenia, np. age > 0"]
+    CLEAN --> SPLIT{Podział train / test}
+    SPLIT --> TR[Train]
+    SPLIT --> TE[Test]
+    TR --> FIT["fit: mediany, średnie,\nodchylenia, słownik kategorii"]
+    FIT --> ART[(Artefakt pipeline.joblib)]
+    ART --> T1[transform train]
+    ART --> T2[transform test]
+    ART --> T3[transform produkcja]
+```
+
+> 💡 Reguła kciuka: operacje **bez stanu** (filtr `age > 0`, obliczenie `income / age`) można robić przed podziałem. Operacje, które **uczą się statystyk z danych** (imputacja medianą, skalowanie, kodowanie kategorii, progi IQR, selekcja cech), muszą być częścią pipeline'u dopasowywanego tylko na zbiorze treningowym. Zwróć uwagę, że usuwanie outlierów metodą IQR w `clean_data` powyżej liczy kwantyle na całym zbiorze – w rygorystycznym ujęciu to również drobny wyciek.
+
+### Rodzaje braków danych
+
+| Mechanizm | Znaczenie | Przykład | Konsekwencja |
+|---|---|---|---|
+| MCAR (Missing Completely At Random) | brak niezależny od czegokolwiek | awaria czujnika losowo | imputacja prosta jest OK |
+| MAR (Missing At Random) | brak zależy od innych obserwowanych cech | starsi rzadziej podają e-mail | imputacja warunkowa (KNN, iteracyjna) |
+| MNAR (Missing Not At Random) | brak zależy od samej brakującej wartości | osoby o wysokich dochodach nie podają dochodu | sam fakt braku niesie informację |
+
+```python
+from sklearn.impute import SimpleImputer
+
+# add_indicator=True dodaje kolumnę binarną "czy był brak" – przydatne przy MNAR
+imputer = SimpleImputer(strategy="median", add_indicator=True)
+```
+
+### Kodowanie zmiennych kategorycznych
+
+| Metoda | Kiedy | Ryzyko |
+|---|---|---|
+| One-Hot | mała kardynalność (< ~50) | eksplozja wymiarów |
+| Ordinal | naturalny porządek (S < M < L) | sztuczny porządek, jeśli go nie ma |
+| Target encoding | duża kardynalność | **wyciek etykiety** – wymaga CV/out-of-fold |
+| Hashing | bardzo duża kardynalność, streaming | kolizje, brak interpretowalności |
+| Embeddingi | DL, kategorie jak `product_id` | potrzeba dużo danych |
+
+### Własny transformer zgodny ze sklearn
+
+Cechy pochodne warto także zamknąć w pipeline, aby produkcja liczyła je identycznie:
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
+
+class RatioFeatures(BaseEstimator, TransformerMixin):
+    """Dodaje income_per_age; bezstanowy, więc fit nic nie uczy."""
+
+    def fit(self, X: pd.DataFrame, y=None):
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        X = X.copy()
+        X["income_per_age"] = X["income"] / X["age"].replace(0, np.nan)
+        return X
+```
+
+```python
+import joblib
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+
+full_pipeline = Pipeline([
+    ("ratios", RatioFeatures()),
+    ("prep", build_preprocessing_pipeline(
+        ["age", "income", "income_per_age"], ["category"])),
+    ("model", LogisticRegression(max_iter=1000)),
+])
+full_pipeline.fit(X_train, y_train)
+joblib.dump(full_pipeline, "models/churn_pipeline.joblib")   # jeden artefakt
+```
+
+> ⚠️ **Pułapka:** zapisanie samego modelu (`model.pkl`) bez preprocessora. Serwis produkcyjny musi wtedy odtworzyć skalowanie ręcznie – to prosta droga do training-serving skew.
+
+### Typowe operacje czyszczenia – ściąga
+
+| Problem | Wykrycie | Typowa reakcja |
+|---|---|---|
+| Duplikaty | `df.duplicated(subset=klucz)` | deduplikacja po kluczu i najnowszym znaczniku |
+| Niespójne kategorie (`"PL"`, `"pl"`, `"Polska"`) | `value_counts()` | normalizacja, słownik mapowań |
+| Wartości wartownicze (`-1`, `999`, `"N/A"`) | rozkład, wiedza domenowa | zamiana na `NaN` |
+| Strefy czasowe | mieszane offsety | konwersja do UTC |
+| Outliery | IQR, z-score, wiedza domenowa | usunięcie, przycięcie (*clipping*), osobna flaga |
+
 ---
 
 ## 6. Walidacja danych – Great Expectations
@@ -475,6 +856,93 @@ flowchart LR
 ```
 
 Rozwiązania: jedna implementacja cech (Feature Store, wspólna biblioteka), zapis cech użytych przy predykcji (*log & wait*) i porównywanie ich z cechami treningowymi.
+
+### Walidacja schematu w kodzie: Pandera
+
+Alternatywą lżejszą od Great Expectations jest **Pandera** – schematy danych zapisane jako kod Pythona, wygodne w testach jednostkowych.
+
+```python
+import pandas as pd
+import pandera as pa
+from pandera import Column, Check
+
+schema = pa.DataFrameSchema({
+    "age":    Column(int,   Check.in_range(0, 120)),
+    "income": Column(float, Check.ge(0), nullable=True),
+    "churn":  Column(int,   Check.isin([0, 1])),
+}, strict=True)               # dodatkowe, nieznane kolumny = błąd
+
+df = pd.DataFrame({"age": [25, 130], "income": [5000.0, None], "churn": [0, 1]})
+try:
+    schema.validate(df, lazy=True)        # lazy: zbierz wszystkie błędy naraz
+except pa.errors.SchemaErrors as err:
+    print(err.failure_cases[["column", "check", "failure_case"]])
+```
+
+| Narzędzie | Styl | Mocne strony |
+|---|---|---|
+| Great Expectations | deklaratywne „oczekiwania”, raporty HTML | dokumentacja danych, dużo gotowych reguł |
+| Pandera | schemat jako kod | integracja z testami i typowaniem |
+| dbt tests | SQL w hurtowni | walidacja tam, gdzie są dane |
+| TFDV / Evidently | statystyki i dryf | porównanie rozkładów train vs produkcja |
+
+### Walidacja statystyczna: dryf rozkładu i PSI
+
+**Population Stability Index** porównuje rozkład cechy w danych referencyjnych (np. treningowych) i bieżących:
+
+PSI = Σ (pᵢ − qᵢ) · ln(pᵢ / qᵢ), gdzie pᵢ, qᵢ to udziały obserwacji w koszyku *i*.
+
+```python
+import numpy as np
+
+def psi(reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
+    edges = np.quantile(reference, np.linspace(0, 1, bins + 1))
+    edges[0], edges[-1] = -np.inf, np.inf
+    p = np.histogram(reference, edges)[0] / len(reference)
+    q = np.histogram(current, edges)[0] / len(current)
+    p, q = np.clip(p, 1e-6, None), np.clip(q, 1e-6, None)
+    return float(np.sum((p - q) * np.log(p / q)))
+
+rng = np.random.default_rng(42)
+train_income = rng.normal(5000, 1000, 10_000)
+print(psi(train_income, rng.normal(5000, 1000, 10_000)))   # ~0.00 – stabilnie
+print(psi(train_income, rng.normal(5600, 1200, 10_000)))   # wyraźnie > 0.1 – dryf
+```
+
+| PSI | Interpretacja (konwencja branżowa) |
+|---|---|
+| < 0.1 | brak istotnej zmiany |
+| 0.1 – 0.2 | umiarkowana zmiana – obserwuj |
+| > 0.2 | istotna zmiana – zbadaj, rozważ retrening |
+
+### Data contracts – kontrakty danych
+
+Wiele awarii pipeline'ów ML wynika z tego, że zespół produktowy zmienił źródło (nazwę kolumny, jednostkę, znaczenie statusu), nie wiedząc, że ktoś z niego korzysta. **Kontrakt danych** to jawne, wersjonowane porozumienie producenta i konsumenta:
+
+```yaml
+# contracts/orders.yaml
+dataset: orders
+owner: team-checkout
+version: 2.1.0
+freshness: { max_delay: 2h }
+schema:
+  - { name: order_id,  type: string,  required: true, unique: true }
+  - { name: amount,    type: decimal, unit: PLN, min: 0 }
+  - { name: status,    type: string,  enum: [NEW, PAID, CANCELLED, REFUNDED] }
+breaking_change_policy: "nowa wersja główna + 30 dni okresu przejściowego"
+```
+
+```mermaid
+flowchart LR
+    P[Producent danych] -->|publikuje zgodnie z kontraktem| T[(Tabela lub topic)]
+    C[Kontrakt YAML w repozytorium] -.->|walidacja w CI producenta| P
+    C -.->|walidacja przy odczycie| K[Pipeline ML]
+    T --> K
+```
+
+> 💡 **Gdzie walidować?** Najtaniej jak najbliżej źródła (*shift left*): błąd złapany w CI producenta kosztuje minuty, ten sam błąd wykryty po spadku metryk modelu – tygodnie.
+
+> ⚠️ **Pułapka: zbyt sztywne reguły.** Reguła „0 braków w `income`” zablokuje pipeline przy pierwszym pojedynczym nullu. Stosuj progi tolerancji (`mostly=0.99` w GE, demo `03_data_validation.py`) i rozróżniaj poziomy: *błąd krytyczny* (stop) vs *ostrzeżenie* (alert, pipeline idzie dalej).
 
 ---
 
@@ -709,6 +1177,85 @@ Feature Store (np. Feast `get_historical_features`) wykonuje point-in-time join 
 | Latencja | minuty | milisekundy |
 | Dane | pełna historia | tylko najnowsza wartość cechy |
 
+### Architektura Feature Store
+
+```mermaid
+flowchart LR
+    subgraph Zrodla["Źródła"]
+        B[(Dane batch\nWarehouse lub Lake)]
+        S[[Strumień\nKafka]]
+    end
+    subgraph FS["Feature Store"]
+        REG[Rejestr definicji cech]
+        OFF[(Offline store)]
+        ON[(Online store)]
+    end
+    B -->|transformacje batch| OFF
+    S -->|transformacje streaming| ON
+    OFF -->|materializacja| ON
+    OFF -->|point-in-time join| TR[Trening modelu]
+    ON -->|odczyt w ms| SV[Serwis predykcji]
+    REG -.-> OFF
+    REG -.-> ON
+```
+
+Najważniejsze komponenty:
+- **Rejestr** – definicje cech, właściciele, opisy, wersje (odkrywalność i reużycie).
+- **Offline store** – pełna historia do budowy zbiorów treningowych.
+- **Online store** – najnowsze wartości do serwowania z niską latencją.
+- **Materializacja** – okresowe kopiowanie najnowszych wartości offline → online (w Feast: `feast materialize-incremental <data>`).
+
+### Współczesne API Feast
+
+> ⚠️ Przykład z początku sekcji używa starszego API (`Feature`, `ValueType`), które w nowych wersjach Feast zostało zastąpione przez `Field` i `schema`. Poniżej odpowiednik w aktualnym stylu – sprawdź wersję biblioteki w `requirements.txt`.
+
+```python
+from datetime import timedelta
+from feast import Entity, FeatureView, Field, FileSource
+from feast.types import Float32, Int64
+
+user = Entity(name="user", join_keys=["user_id"])
+
+user_stats_source = FileSource(
+    path="data/user_stats.parquet",
+    timestamp_field="event_timestamp",
+    created_timestamp_column="created",   # czas dostępności wartości
+)
+
+user_stats_fv = FeatureView(
+    name="user_statistics",
+    entities=[user],
+    ttl=timedelta(days=7),
+    schema=[
+        Field(name="age", dtype=Float32),
+        Field(name="income", dtype=Float32),
+        Field(name="total_purchases_30d", dtype=Int64),
+    ],
+    source=user_stats_source,
+)
+```
+
+```bash
+feast apply                                  # rejestracja definicji
+feast materialize-incremental 2024-01-15T00:00:00   # offline → online
+```
+
+### Kiedy Feature Store się opłaca?
+
+| Sytuacja | Feature Store? |
+|---|---|
+| Jeden model batch, mały zespół | raczej nie – wystarczy tabela Gold + wspólny kod |
+| Wiele modeli współdzielących cechy | tak – reużycie i spójne definicje |
+| Predykcje online z cechami historycznymi (np. fraud) | zdecydowanie tak |
+| Silne wymagania audytu (finanse) | tak – lineage i wersjonowanie cech |
+
+| Rozwiązanie | Typ | Uwagi |
+|---|---|---|
+| Feast | open source | lekki, „bring your own” storage |
+| Hopsworks | open source / komercyjny | pełna platforma z online store |
+| Tecton | komercyjny | silne wsparcie streamingu |
+| Databricks / Vertex AI / SageMaker Feature Store | zarządzane w chmurze | integracja z ekosystemem dostawcy |
+
 ---
 
 ## 8. Wersjonowanie danych z DVC
@@ -788,6 +1335,68 @@ test_size: 0.2
 > **▶️ Demo na żywo:** `bash lectures/scripts/lecture_02/05_dvc_demo.sh`  
 > **Kiedy:** po omówieniu poleceń DVC i pliku `.dvc`.  
 > **Co pokazać:** zawartość pliku `train.csv.dvc` (hash md5), zmianę liczby wierszy z 5000 na 1000 po `git checkout data-v1 && dvc checkout` oraz historię commitów.
+
+### Jak DVC działa pod spodem?
+
+```mermaid
+flowchart LR
+    subgraph Git["Repozytorium Git"]
+        M["train.parquet.dvc\nmd5 a1b2..."]
+        Y[dvc.yaml i dvc.lock]
+    end
+    subgraph Local["Dysk lokalny"]
+        W[data/train.parquet]
+        C[(.dvc/cache\npliki nazwane hashem)]
+    end
+    R[(Remote: S3, GCS, SSH)]
+    W -->|dvc add| C
+    C -->|dvc push| R
+    R -->|dvc pull| C
+    C -->|dvc checkout| W
+    M -. wskazuje hash .-> C
+```
+
+- Git przechowuje tylko **mały plik-wskaźnik** z hashem; duże pliki trafiają do cache i remote (*content-addressable storage*).
+- Ten sam plik w wielu wersjach projektu zajmuje miejsce tylko raz.
+- `dvc.lock` zapisuje hashe wejść i wyjść każdego etapu – `dvc repro` uruchamia **tylko etapy, których zależności się zmieniły**.
+
+### Typowy przepływ pracy z pipeline DVC
+
+```bash
+dvc dag                     # wizualizacja zależności etapów
+dvc repro                   # uruchom tylko zmienione etapy
+dvc params diff             # co zmieniło się w params.yaml
+dvc metrics diff main       # porównanie metryk z gałęzią main
+dvc exp run -S train.max_depth=8   # eksperyment z innym parametrem
+git add dvc.lock params.yaml && git commit -m "max_depth=8"
+dvc push
+```
+
+Przykładowy wynik `dvc dag`:
+
+```
++---------+
+| prepare |
++---------+
+     *
+     *
++-------+
+| train |
++-------+
+```
+
+### Porównanie narzędzi do wersjonowania danych
+
+| Narzędzie | Model | Skala | Kiedy |
+|---|---|---|---|
+| DVC | pliki + Git | pliki/katalogi do setek GB | projekty ML, eksperymenty |
+| Git LFS | pliki w Git | małe/średnie pliki | binaria, bez pipeline'ów |
+| lakeFS | „Git dla object storage” (gałęzie, commity) | całe jeziora danych | izolacja zmian w lake |
+| Delta / Iceberg time travel | wersje tabel | bardzo duże tabele | tabele analityczne w lakehouse |
+
+> ⚠️ **Pułapka:** commit pliku `.dvc` bez `dvc push`. Koledzy dostaną wskaźnik do danych, których nie ma w remote. Dobrą praktyką jest hook pre-push lub krok CI sprawdzający `dvc status -c`.
+
+> 💡 Dla pełnej odtwarzalności modelu trzeba znać trzy rzeczy: **wersję kodu** (commit Git), **wersję danych** (hash DVC / snapshot tabeli) i **parametry/środowisko** (`params.yaml`, obraz Dockera). Zapisuj wszystkie trzy przy każdym przebiegu treningu (np. jako tagi w MLflow).
 
 ---
 
@@ -901,6 +1510,65 @@ print(tx["amount"].resample("10min").sum())          # okna tumbling
 print(tx["amount"].rolling("10min").count())         # okno przesuwne: liczba tx w ost. 10 min
 ```
 
+### Batch vs streaming – porównanie
+
+| Kryterium | Batch | Streaming |
+|---|---|---|
+| Opóźnienie | minuty – godziny | milisekundy – sekundy |
+| Złożoność | niższa | wyższa (stan, spóźnione zdarzenia, porządek) |
+| Koszt | zwykle niższy | stała infrastruktura 24/7 |
+| Poprawianie błędów | ponowne uruchomienie partii | replay z logu, trudniejsze |
+| Typowe cechy | agregaty 30/90 dni | liczniki z ostatnich minut |
+
+> 💡 W praktyce większość systemów łączy oba podejścia: cechy „wolnozmienne” (np. średnia wartość zamówień z 90 dni) liczone są wsadowo, a „szybkozmienne” (liczba transakcji w ostatnich 5 min) strumieniowo – oba trafiają do tego samego online store.
+
+### Semantyka dostarczania wiadomości
+
+| Gwarancja | Znaczenie | Konsekwencja dla cech ML |
+|---|---|---|
+| at-most-once | wiadomość może zginąć | zaniżone liczniki |
+| at-least-once | wiadomość może się powtórzyć | zawyżone liczniki – potrzebna deduplikacja po `event_id` |
+| exactly-once | efekt jak przy jednokrotnym przetworzeniu | wymaga transakcji (Kafka transactions, checkpointy Flink) |
+
+W przykładzie konsumenta powyżej offsety są zatwierdzane automatycznie – przy awarii w trakcie przetwarzania możliwa jest utrata lub ponowne przetworzenie wiadomości. W produkcji stosuje się ręczne `commit()` po udanym przetworzeniu oraz idempotentnych odbiorców.
+
+### Event time, watermark i spóźnione zdarzenia
+
+```
+event time:       10:00  10:02  10:04       10:01 (spóźnione!)
+processing time:  10:00  10:02  10:04  ...  10:07
+                   │      │      │            │
+okno [10:00,10:05) ●──────●──────●            ●  ← przyjęte, jeśli watermark
+                                                  (np. max_event_time − 5 min)
+                                                  jeszcze nie zamknął okna
+```
+
+**Watermark** to deklaracja „nie spodziewam się już zdarzeń starszych niż T”. Za mały – gubimy spóźnione zdarzenia; za duży – wyniki okien publikujemy z większym opóźnieniem i trzymamy więcej stanu.
+
+### Case study: wykrywanie fraudów w czasie rzeczywistym
+
+```mermaid
+sequenceDiagram
+    participant K as Klient
+    participant API as API płatności
+    participant FS as Online Feature Store
+    participant M as Model fraud
+    participant Q as Kafka
+    participant F as Flink
+
+    K->>API: transakcja
+    API->>FS: pobierz cechy karty
+    FS-->>API: tx_count_10m, avg_amount_90d
+    API->>M: predykcja
+    M-->>API: p_fraud = 0.93
+    API-->>K: odrzucenie lub 3-D Secure
+    API->>Q: zdarzenie transakcji
+    Q->>F: strumień
+    F->>FS: aktualizacja tx_count_10m
+```
+
+Budżet latencji całej ścieżki to zwykle kilkadziesiąt–kilkaset ms, dlatego cechy muszą być **wcześniej policzone** i leżeć w online store; liczenie agregatów 90-dniowych w chwili żądania jest niewykonalne.
+
 ---
 
 ## 10. Typowe pułapki w inżynierii danych dla ML
@@ -940,6 +1608,67 @@ X_test_scaled = scaler.transform(X_test)         # transform na test
 - Brak odpowiedniego monitoringu dryfu danych — model kontynuował predykcje mimo fundamentalnej zmiany rozkładu cen.
 - Niewystarczająca walidacja danych wejściowych — model akceptował nierealistyczne wartości cech.
 
+> 💡 Część analityków podkreśla też efekty biznesowe (agresywne cele zakupowe, *adverse selection* – sprzedający chętniej przyjmowali zawyżone oferty). Lekcja dla MLOps: model jest elementem większego systemu decyzyjnego, a jakość danych i monitoring muszą uwzględniać pętlę sprzężenia między predykcjami a danymi.
+
+### Kolejne pułapki
+
+> ⚠️ **Pułapka 4: Losowy podział danych czasowych**
+> Przy danych z osią czasu `train_test_split(shuffle=True)` miesza przyszłość z przeszłością. Stosuj podział po czasie lub `TimeSeriesSplit`.
+
+```python
+from sklearn.model_selection import TimeSeriesSplit
+
+df = df.sort_values("event_ts")
+for fold, (tr_idx, te_idx) in enumerate(TimeSeriesSplit(n_splits=4).split(df)):
+    print(fold, df.iloc[tr_idx]["event_ts"].max(), "<", df.iloc[te_idx]["event_ts"].min())
+```
+
+> ⚠️ **Pułapka 5: Wyciek przez grupy (ten sam klient w train i test)**
+> Jeśli jeden pacjent/klient ma wiele wierszy, model może „zapamiętać” osobę. Użyj `GroupKFold` / `GroupShuffleSplit` z `groups=customer_id`.
+
+> ⚠️ **Pułapka 6: Cechy-proxy etykiety**
+> Kolumna `cancellation_reason` dla modelu churnu jest wypełniona tylko u klientów, którzy już odeszli. Każdą cechę sprawdzaj pytaniem: *„czy znałbym tę wartość w chwili predykcji?”*.
+
+> ⚠️ **Pułapka 7: Cicha zmiana źródła**
+> Zmiana jednostki (grosze → złote), kodowania (`M/F` → `1/2`) albo znaczenia statusu nie wywoła błędu, tylko po cichu pogorszy model. Pomagają kontrakty danych i walidacja rozkładów (sekcja 6).
+
+> ⚠️ **Pułapka 8: Niezbalansowane lub stronnicze próbki**
+> Dane historyczne odzwierciedlają dawne decyzje (np. kredyty przyznawane tylko części klientów – *selection bias*). Model nie wie nic o populacji, której nigdy nie obsłużono.
+
+### Taksonomia wycieku danych
+
+| Typ wycieku | Mechanizm | Przykład | Ochrona |
+|---|---|---|---|
+| Preprocessing | statystyki liczone na całym zbiorze | `StandardScaler` przed splitem | `Pipeline` + CV |
+| Selekcja cech | wybór cech z użyciem etykiet testu | `SelectKBest` przed CV (demo `04_data_leakage.py`) | selekcja wewnątrz pipeline |
+| Temporalny | informacja z przyszłości | agregat z całej historii klienta | point-in-time join, split po czasie |
+| Target leakage | cecha jest skutkiem etykiety | `cancellation_reason` | przegląd cech z ekspertem domenowym |
+| Grupowy | ta sama encja w train i test | zdjęcia tego samego pacjenta | `GroupKFold` |
+| Duplikaty | identyczne wiersze w obu zbiorach | zdublowane rekordy z ETL | deduplikacja przed splitem |
+
+```mermaid
+flowchart TD
+    A["Podejrzanie wysoki wynik offline?"] --> B{"Czy jedna cecha\ndominuje ważność?"}
+    B -->|tak| C["Sprawdź, czy jest znana\nw chwili predykcji"]
+    B -->|nie| D{"Czy dane mają\noś czasu lub grupy?"}
+    D -->|tak| E["Użyj splitu czasowego\nlub GroupKFold"]
+    D -->|nie| F{"Czy preprocessing\njest w Pipeline?"}
+    F -->|nie| G["Przenieś fit do Pipeline"]
+    F -->|tak| H["Sprawdź duplikaty\nmiędzy train i test"]
+```
+
+### Checklista inżynierii danych dla projektu ML
+
+- [ ] Surowe dane są przechowywane niezmienione (Bronze) i można odtworzyć z nich resztę.
+- [ ] Każdy zbiór ma właściciela, opis schematu i politykę retencji.
+- [ ] Dane zapisane w formacie ze schematem (Parquet), partycjonowane po dacie.
+- [ ] Zadania pipeline'u są idempotentne i parametryzowane datą logiczną.
+- [ ] Walidacja (schemat, zakresy, świeżość, rozkłady) działa jako bramka w pipeline i CI.
+- [ ] Cechy budowane z zachowaniem point-in-time correctness.
+- [ ] Preprocessing zapisany razem z modelem jako jeden artefakt.
+- [ ] Wersja danych (DVC/snapshot) zapisana przy każdym treningu.
+- [ ] Cechy serwowane na produkcji są logowane i porównywane z treningowymi.
+
 ---
 
 ## Pytania kontrolne i do dyskusji
@@ -951,6 +1680,12 @@ X_test_scaled = scaler.transform(X_test)         # transform na test
 5. Jakie korzyści daje Feature Store w porównaniu z ręcznym obliczaniem cech?
 6. Dlaczego wersjonowanie danych (DVC) jest ważne w projektach ML?
 7. **Dyskusja:** Kiedy warto użyć stream processingu zamiast batch processingu w kontekście ML?
+8. Czym jest point-in-time correctness i dlaczego zwykły `JOIN` po kluczu encji może prowadzić do wycieku?
+9. Co oznacza idempotentność zadania w pipeline danych? Podaj przykład zadania nieidempotentnego i sposób jego naprawy.
+10. Wyjaśnij różnicę między architekturą Lambda a Kappa.
+11. Do czego służy PSI i jak interpretować jego wartości?
+12. Dlaczego SCD typu 2 jest lepszy dla ML niż SCD typu 1?
+13. **Dyskusja:** Twój model churnu ma AUC = 0.99 na walidacji. Jakie kroki diagnostyczne wykonasz, zanim go wdrożysz?
 
 
 ### Proponowane odpowiedzi
@@ -962,6 +1697,12 @@ X_test_scaled = scaler.transform(X_test)         # transform na test
 5. Feature Store zapewnia spójność cech online/offline, wersjonowanie, reużywalność i centralne zarządzanie definicjami cech. Ręczne liczenie cech zwiększa ryzyko niespójności i duplikacji.
 6. DVC daje odtwarzalność eksperymentów: wiemy, na jakiej wersji danych trenowano dany model. Ułatwia audyt, porównania i rollback po pogorszeniu jakości.
 7. Stream processing warto wybrać, gdy decyzje muszą być podejmowane blisko czasu rzeczywistego (np. fraud, rekomendacje live). Batch wystarcza, gdy dopuszczalne jest opóźnienie i ważniejsza jest prostota/koszt.
+8. To zasada, że do zdarzenia z chwili *t* dołączamy wyłącznie wartości cech dostępne w chwili *t*. Zwykły `JOIN` bierze bieżącą (najnowszą) wartość cechy, często policzoną po zdarzeniu, więc model uczy się na informacji z przyszłości. Rozwiązanie: złączenie as-of (`merge_asof`, `get_historical_features`).
+9. Idempotentne zadanie uruchomione wielokrotnie dla tych samych parametrów daje ten sam wynik. Nieidempotentne: `INSERT` dopisujący dane dnia – ponowienie po awarii tworzy duplikaty. Naprawa: nadpisanie partycji (`INSERT OVERWRITE`, `MERGE` po kluczu) i parametryzacja datą logiczną zamiast `now()`.
+10. Lambda utrzymuje dwie ścieżki – dokładną batch i szybką streaming – scalane w warstwie serwowania (koszt: dwie implementacje logiki). Kappa ma jedną ścieżkę streamingową, a historię przelicza przez replay logu zdarzeń.
+11. PSI mierzy zmianę rozkładu cechy między danymi referencyjnymi a bieżącymi. Konwencjonalnie: < 0.1 brak zmian, 0.1–0.2 umiarkowana zmiana, > 0.2 istotny dryf wymagający analizy lub retreningu.
+12. SCD1 nadpisuje atrybut, więc tracimy historię i do starych zdarzeń dołączamy bieżący stan (wyciek). SCD2 przechowuje wersje z zakresem ważności, co pozwala odtworzyć stan encji w chwili zdarzenia.
+13. Sprawdzić ważność cech (czy jedna dominuje i czy jest znana w chwili predykcji), sposób podziału (czas, grupy), czy preprocessing i selekcja cech są wewnątrz pipeline'u, duplikaty między zbiorami oraz point-in-time correctness złączeń. Następnie zweryfikować model na zbiorze „z przyszłości” (out-of-time) lub w trybie shadow.
 
 
 ---
@@ -975,6 +1716,8 @@ X_test_scaled = scaler.transform(X_test)         # transform na test
 - **Feature Store** eliminuje duplikację i zapewnia spójność cech między treningiem a produkcją.
 - **DVC** umożliwia wersjonowanie danych razem z kodem.
 - Unikaj typowych pułapek: data leakage, training-serving skew, ignorowanie brakujących wartości.
+- **Point-in-time correctness**, **idempotentne pipeline'y** i **kontrakty danych** to fundamenty odtwarzalnych i wiarygodnych danych treningowych.
+- Batch i streaming się uzupełniają – wybór zależy od wymaganej latencji decyzji i kosztu.
 
 ## Literatura i zasoby
 
@@ -985,3 +1728,7 @@ X_test_scaled = scaler.transform(X_test)         # transform na test
 - [Apache Parquet Format](https://parquet.apache.org/)
 - [Zillow's iBuying Debacle – What Went Wrong](https://insidebigdata.com/2021/12/13/the-500-million-lesson-from-zillow/)
 - [Data Leakage in Machine Learning (Kaggle)](https://www.kaggle.com/code/alexisbcook/data-leakage)
+- [Hidden Technical Debt in Machine Learning Systems (NeurIPS 2015)](https://papers.nips.cc/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html)
+- [Pandera Documentation](https://pandera.readthedocs.io/)
+- [Delta Lake Documentation](https://docs.delta.io/)
+- [dbt Documentation](https://docs.getdbt.com/)
