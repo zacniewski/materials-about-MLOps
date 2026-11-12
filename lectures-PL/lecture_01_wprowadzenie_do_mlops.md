@@ -9,7 +9,7 @@ Po tym wykładzie student:
 
 ## Skrypty do wykładu
 
-Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_01/`. Pełną instrukcję znajdziesz w [`lectures/scripts/README.md`](scripts/README.md).
+Skrypty demonstracyjne znajdują się w ``. Pełną instrukcję znajdziesz w [``](scripts/README.md).
 
 | Kiedy (sekcja) | Skrypt | Cel demonstracji |
 |---|---|---|
@@ -17,7 +17,7 @@ Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_01/`. Pełną 
 | 4.2–4.3 Data/Concept drift | `02_data_drift.py --plot` | test KS wykrywa data drift, ale concept drift wykryje dopiero monitoring metryk |
 | 8. Prosty system MLOps | `03_simple_mlops_system.py` | rejestr modeli z automatyczną promocją lepszego modelu |
 
-**Jak:** z katalogu głównego repozytorium, po `pip install -r requirements.txt`, uruchom `python lectures/scripts/lecture_01/<skrypt>`. Wyniki zapisują się w `lectures/scripts/lecture_01/outputs/`.
+**Jak:** z katalogu głównego repozytorium, po `pip install -r requirements.txt`, uruchom `python lectures/scripts/lecture_01/<skrypt>`. Wyniki zapisują się w ``.
 
 ---
 

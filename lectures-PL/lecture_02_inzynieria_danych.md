@@ -9,7 +9,7 @@ Po tym wykładzie student:
 
 ## Skrypty do wykładu
 
-Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_02/`. Pełną instrukcję znajdziesz w [`lectures/scripts/README.md`](scripts/README.md).
+Skrypty demonstracyjne znajdują się w ``. Pełną instrukcję znajdziesz w [``](scripts/README.md).
 
 | Kiedy (sekcja) | Skrypt | Cel demonstracji |
 |---|---|---|

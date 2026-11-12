@@ -210,6 +210,6 @@ __marimo__/
 syllabus/
 
 # Wyniki skryptów demonstracyjnych z wykładów
-lectures/scripts/**/outputs/
+lectures-PL/scripts/**/outputs/
 mlruns/
 mlartifacts/

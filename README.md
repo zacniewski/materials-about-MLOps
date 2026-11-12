@@ -23,14 +23,14 @@ materials-about-MLOps/
 
 | # | Temat | Plik |
 |---|-------|------|
-| 1 | Wprowadzenie do MLOps i Inżynierii Systemów ML | [lecture_01](lectures/lecture_01_wprowadzenie_do_mlops.md) |
-| 2 | Inżynieria Danych dla ML | [lecture_02](lectures/lecture_02_inzynieria_danych.md) |
-| 3 | Eksperymentowanie i Śledzenie Eksperymentów | [lecture_03](lectures/lecture_03_eksperymentowanie_i_tracking.md) |
-| 4 | ML Pipelines – Automatyzacja Przepływu Pracy | [lecture_04](lectures/lecture_04_ml_pipelines.md) |
-| 5 | Wdrażanie i Serwowanie Modeli ML | [lecture_05](lectures/lecture_05_model_serving.md) |
-| 6 | Monitoring Modeli ML w Produkcji | [lecture_06](lectures/lecture_06_monitoring.md) |
-| 7 | CI/CD dla Machine Learning | [lecture_07](lectures/lecture_07_cicd_dla_ml.md) |
-| 8 | Skalowalność, Bezpieczeństwo i Optymalizacja Kosztów | [lecture_08](lectures/lecture_08_skalowalnosc_i_bezpieczenstwo.md) |
+| 1 | Wprowadzenie do MLOps i Inżynierii Systemów ML | [lecture_01](lectures-PL/lecture_01_wprowadzenie_do_mlops.md) |
+| 2 | Inżynieria Danych dla ML | [lecture_02](lectures-PL/lecture_02_inzynieria_danych.md) |
+| 3 | Eksperymentowanie i Śledzenie Eksperymentów | [lecture_03](lectures-PL/lecture_03_eksperymentowanie_i_tracking.md) |
+| 4 | ML Pipelines – Automatyzacja Przepływu Pracy | [lecture_04](lectures-PL/lecture_04_ml_pipelines.md) |
+| 5 | Wdrażanie i Serwowanie Modeli ML | [lecture_05](lectures-PL/lecture_05_model_serving.md) |
+| 6 | Monitoring Modeli ML w Produkcji | [lecture_06](lectures-PL/lecture_06_monitoring.md) |
+| 7 | CI/CD dla Machine Learning | [lecture_07](lectures-PL/lecture_07_cicd_dla_ml.md) |
+| 8 | Skalowalność, Bezpieczeństwo i Optymalizacja Kosztów | [lecture_08](lectures-PL/lecture_08_skalowalnosc_i_bezpieczenstwo.md) |
 
 ---
 
@@ -40,13 +40,13 @@ materials-about-MLOps/
 
 | # | Temat | Plik | Poziom |
 |---|-------|------|--------|
-| 1 | Środowisko MLOps i Wersjonowanie Kodu | [lab_01](labs/lab_01_srodowisko_i_git.md) | Podstawowy |
-| 2 | Śledzenie Eksperymentów z MLflow | [lab_02](labs/lab_02_mlflow_tracking.md) | Podstawowy–Średni |
-| 3 | Walidacja Danych i Feature Store | [lab_03](labs/lab_03_walidacja_danych.md) | Średni |
-| 4 | REST API i Serwowanie Modelu ML | [lab_04](labs/lab_04_rest_api_serwowanie.md) | Średni |
-| 5 | Monitoring Modelu i Wykrywanie Dryfu | [lab_05](labs/lab_05_monitoring_dryft.md) | Średni–Zaawansowany |
-| 6 | Budowanie ML Pipeline z Kubeflow Pipelines | [lab_06](labs/lab_06_ml_pipeline_kfp.md) | Zaawansowany |
-| 7 | CI/CD dla ML z GitHub Actions | [lab_07](labs/lab_07_cicd_github_actions.md) | Zaawansowany |
+| 1 | Środowisko MLOps i Wersjonowanie Kodu | [lab_01](labs-PL/lab_01_srodowisko_i_git.md) | Podstawowy |
+| 2 | Śledzenie Eksperymentów z MLflow | [lab_02](labs-PL/lab_02_mlflow_tracking.md) | Podstawowy–Średni |
+| 3 | Walidacja Danych i Feature Store | [lab_03](labs-PL/lab_03_walidacja_danych.md) | Średni |
+| 4 | REST API i Serwowanie Modelu ML | [lab_04](labs-PL/lab_04_rest_api_serwowanie.md) | Średni |
+| 5 | Monitoring Modelu i Wykrywanie Dryfu | [lab_05](labs-PL/lab_05_monitoring_dryft.md) | Średni–Zaawansowany |
+| 6 | Budowanie ML Pipeline z Kubeflow Pipelines | [lab_06](labs-PL/lab_06_ml_pipeline_kfp.md) | Zaawansowany |
+| 7 | CI/CD dla ML z GitHub Actions | [lab_07](labs-PL/lab_07_cicd_github_actions.md) | Zaawansowany |
 
 ### Projekt końcowy (równolegle)
 

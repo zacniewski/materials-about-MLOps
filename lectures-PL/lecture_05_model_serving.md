@@ -9,7 +9,7 @@ Po tym wykładzie student:
 - rozumie trade-off latencja vs throughput, percentyle p95/p99 i mikrobatching,
 - potrafi zaprojektować idempotentny batch scoring i bezpieczny rollout z automatycznym rollbackiem.
 
-> 💻 **Skrypty do wykładu** (katalog `lectures/scripts/lecture_05/`, uruchamiane z katalogu głównego repo):
+> 💻 **Skrypty do wykładu** (katalog ``, uruchamiane z katalogu głównego repo):
 >
 > | Skrypt | Sekcja | Co pokazuje |
 > |--------|--------|-------------|
@@ -902,7 +902,7 @@ if __name__ == "__main__":
 - **Skalowanie:** pandas w chunkach wystarcza do kilkudziesięciu mln wierszy; dalej Spark (`mapInPandas`/`pandas_udf`), Dask, Ray lub scoring bezpośrednio w hurtowni (BigQuery ML, Snowflake UDF).
 - **Sanity checks na wyjściu:** liczba wierszy = liczba wejść, brak NaN, rozkład wyników podobny do wczorajszego (np. alarm, gdy odsetek „high” zmieni się > 2×).
 
-> 💻 **Demo:** `python lectures/scripts/lecture_05/04_batch_scoring.py` – generuje 200 tys. klientów do Parquet, uruchamia scoring w chunkach dwa razy dla tej samej daty i pokazuje, że liczba wierszy w tabeli wyników się nie podwaja (idempotencja). Wyniki trafiają do `lectures/scripts/lecture_05/outputs/scores/`.
+> 💻 **Demo:** `python lectures/scripts/lecture_05/04_batch_scoring.py` – generuje 200 tys. klientów do Parquet, uruchamia scoring w chunkach dwa razy dla tej samej daty i pokazuje, że liczba wierszy w tabeli wyników się nie podwaja (idempotencja). Wyniki trafiają do ``.
 
 ### Streaming serving – szkic
 
@@ -1171,7 +1171,7 @@ sequenceDiagram
 
 Trade-off: **throughput rośnie**, ale każde żądanie może czekać do długości okna. Parametry `max_batch_size` i `max_latency_ms` (BentoML) / `max_queue_delay_microseconds` (Triton) dobiera się eksperymentalnie pod SLO.
 
-> 💻 **Demo:** `python lectures/scripts/lecture_05/02_latency_batching.py` – mierzy p50/p95/p99 i throughput RandomForest dla batchy 1…512 oraz pokazuje, jak 1% wolnych żądań zmienia p99 przy niemal niezmienionej średniej. Wykres: `lectures/scripts/lecture_05/outputs/latency_batching.png`. Przykładowy wynik (zależny od sprzętu): batch=1 → ~90 req/s, batch=512 → ~29 000 req/s.
+> 💻 **Demo:** `python lectures/scripts/lecture_05/02_latency_batching.py` – mierzy p50/p95/p99 i throughput RandomForest dla batchy 1…512 oraz pokazuje, jak 1% wolnych żądań zmienia p99 przy niemal niezmienionej średniej. Wykres: ``. Przykładowy wynik (zależny od sprzętu): batch=1 → ~90 req/s, batch=512 → ~29 000 req/s.
 
 ### Techniki przyspieszania inferencji
 

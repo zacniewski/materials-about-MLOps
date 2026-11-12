@@ -9,7 +9,7 @@ Po tym wykładzie student:
 
 ### Skrypty demonstracyjne
 
-Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_08/`. Uruchamiaj je z katalogu głównego repozytorium (`python lectures/scripts/lecture_08/<skrypt>`). Wymagają tylko pakietów z `requirements.txt` (numpy, scikit-learn, pandas, pydantic).
+Skrypty demonstracyjne znajdują się w ``. Uruchamiaj je z katalogu głównego repozytorium (`python lectures/scripts/lecture_08/<skrypt>`). Wymagają tylko pakietów z `requirements.txt` (numpy, scikit-learn, pandas, pydantic).
 
 | Skrypt | Sekcja | Co pokazuje |
 |---|---|---|
@@ -982,7 +982,7 @@ graph LR
 ```
 
 > **▶️ Demo na żywo:** `python lectures/scripts/lecture_08/03_pii_masking.py`  
-> Skrypt maskuje e-mail, telefon, PESEL i IBAN w logach, pseudonimizuje identyfikatory HMAC-SHA256 i pokazuje, że generalizacja wieku i kodu pocztowego podnosi k-anonimowość z k=1 (każdy rekord unikalny) do k≥10. Wynik trafia do `lectures/scripts/lecture_08/outputs/`.
+> Skrypt maskuje e-mail, telefon, PESEL i IBAN w logach, pseudonimizuje identyfikatory HMAC-SHA256 i pokazuje, że generalizacja wieku i kodu pocztowego podnosi k-anonimowość z k=1 (każdy rekord unikalny) do k≥10. Wynik trafia do ``.
 
 **Pułapki:** zwykły hash (SHA-256 bez klucza) z e-maila czy PESEL-u jest łatwy do odwrócenia atakiem słownikowym – przestrzeń PESEL-i to ~10¹⁰ wartości; regexy nie złapią wszystkiego (imiona, adresy w tekście) – dla tekstu stosuje się modele NER (np. Microsoft Presidio); model sam może „zapamiętać” PII (szczególnie LLM) – stąd DP i deduplikacja danych treningowych.
 

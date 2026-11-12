@@ -9,7 +9,7 @@ Po tym wykładzie student:
 - zna pojęcia: artefakt, lineage, metadata store, caching, quality gate, backfill,
 - potrafi świadomie wybrać orkiestrator i uniknąć typowych pułapek.
 
-> 💻 **Skrypty demonstracyjne** do tego wykładu znajdują się w `lectures/scripts/lecture_04/`:
+> 💻 **Skrypty demonstracyjne** do tego wykładu znajdują się w ``:
 >
 > | Skrypt | Sekcja | Co pokazuje |
 > |--------|--------|-------------|
@@ -17,7 +17,7 @@ Po tym wykładzie student:
 > | `02_quality_gate_pipeline.py` | 6a | Lokalny pipeline z artefaktami, lineage (`metadata.jsonl`) i bramką champion/challenger |
 > | `03_kfp_compile.py` | 4–6 | Kompilacja pipeline'u KFP v2 do YAML bez klastra i analiza wygenerowanego DAG |
 >
-> Wyniki zapisywane są w `lectures/scripts/lecture_04/outputs/`.
+> Wyniki zapisywane są w ``.
 
 ---
 

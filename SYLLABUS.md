@@ -67,7 +67,7 @@ Po ukończeniu kursu student:
 ## Materiały
 
 - `README.md` — mapa kursu i szybki start,
-- katalog `lectures/` — materiały teoretyczne,
-- katalog `labs/` — ćwiczenia laboratoryjne,
+- katalog `lectures-PL` — materiały teoretyczne,
+- katalog `labs-PL` — ćwiczenia laboratoryjne,
 - katalog `project/` — materiały ścieżki projektowej,
 - katalog `reports/` — miejsce na raporty i artefakty projektowe.

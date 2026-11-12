@@ -9,7 +9,7 @@ Po tym wykładzie student:
 
 ## Skrypty do wykładu
 
-Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_03/`. Pełną instrukcję znajdziesz w [`lectures/scripts/README.md`](scripts/README.md).
+Skrypty demonstracyjne znajdują się w ``. Pełną instrukcję znajdziesz w [``](scripts/README.md).
 
 | Kiedy (sekcja) | Skrypt | Cel demonstracji |
 |---|---|---|
@@ -187,7 +187,7 @@ export MLFLOW_TRACKING_URI=http://mlflow.firma.local:5000
 
 > ⚠️ Domyślny `mlflow server` nie ma uwierzytelniania. Nie wystawiaj go publicznie bez reverse proxy z logowaniem (lub wbudowanego `--app-name basic-auth`).
 
-> 💡 Skrypty z `lectures/scripts/lecture_03/` domyślnie piszą do `./mlruns`, a po ustawieniu `MLFLOW_TRACKING_URI` – do serwera. Kod treningowy się nie zmienia, zmienia się tylko konfiguracja.
+> 💡 Skrypty z `` domyślnie piszą do `./mlruns`, a po ustawieniu `MLFLOW_TRACKING_URI` – do serwera. Kod treningowy się nie zmienia, zmienia się tylko konfiguracja.
 
 ---
 

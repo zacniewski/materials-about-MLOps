@@ -9,7 +9,7 @@ Po tym wykładzie student:
 
 ## Skrypty do wykładu
 
-Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_07/`. Pełną instrukcję znajdziesz w [`lectures/scripts/README.md`](scripts/README.md).
+Skrypty demonstracyjne znajdują się w ``. Pełną instrukcję znajdziesz w [``](scripts/README.md).
 
 | Kiedy (sekcja) | Skrypt | Cel demonstracji |
 |---|---|---|
@@ -17,7 +17,7 @@ Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_07/`. Pełną 
 | 3. / 6. Pipeline CI/CD | `03_ci_pipeline_sim.py [--break-data]` | lokalna symulacja pipeline'u fail-fast ze smoke trainingiem i manifestem artefaktu |
 | 4. Quality Gates | `02_quality_gate.py [--bad]` | bramka champion vs challenger (progi bezwzględne, względne, fairness; kod wyjścia 1) |
 
-**Jak:** z katalogu głównego repozytorium uruchom `python lectures/scripts/lecture_07/<skrypt>`. Artefakty (model, manifest, raport) trafiają do `lectures/scripts/lecture_07/outputs/`.
+**Jak:** z katalogu głównego repozytorium uruchom `python lectures/scripts/lecture_07/<skrypt>`. Artefakty (model, manifest, raport) trafiają do ``.
 
 ---
 

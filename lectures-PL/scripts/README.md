@@ -14,7 +14,7 @@ pip install optuna                 # opcjonalnie, wykład 3 (bez niej skrypt uż
 ```
 
 Wszystkie polecenia uruchamiaj **z katalogu głównego repozytorium**. Wyniki (pliki JSON, PNG,
-modele, dane) trafiają do `lectures/scripts/lecture_0X/outputs/`, a runy MLflow do `./mlruns`.
+modele, dane) trafiają do `..`, a runy MLflow do `./mlruns`.
 Oba katalogi są w `.gitignore`.
 
 ## Wykład 1 – Wprowadzenie do MLOps

@@ -11,7 +11,7 @@ Po tym wykładzie student:
 
 ## Skrypty do wykładu
 
-Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_06/`. Pełną instrukcję znajdziesz w [`lectures/scripts/README.md`](scripts/README.md).
+Skrypty demonstracyjne znajdują się w ``. Pełną instrukcję znajdziesz w [``](scripts/README.md).
 
 | Kiedy (sekcja) | Skrypt | Cel demonstracji |
 |---|---|---|
@@ -19,7 +19,7 @@ Skrypty demonstracyjne znajdują się w `lectures/scripts/lecture_06/`. Pełną 
 | 1. i 6. Rodzaje dryfu / retraining | `02_concept_drift_stream.py` | data drift vs concept drift na 12-tygodniowym strumieniu, quality gate |
 | 5. Prometheus | `03_prometheus_metrics.py [--serve]` | instrumentacja, format `/metrics`, kwantyle z bucketów histogramu |
 
-**Jak:** z katalogu głównego repozytorium uruchom `python lectures/scripts/lecture_06/<skrypt>`. Skrypt 03 zapisuje wynik do `lectures/scripts/lecture_06/outputs/`.
+**Jak:** z katalogu głównego repozytorium uruchom `python lectures/scripts/lecture_06/<skrypt>`. Skrypt 03 zapisuje wynik do ``.
 
 ---
 
