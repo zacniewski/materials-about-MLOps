@@ -21,7 +21,7 @@ materials-about-MLOps/
 
 ---
 
-> 🇬🇧 **English version:** [lectures-EN](lectures-EN/) · [labs-EN](labs-EN/) (see the [English index](#english-version) below).
+> 🇬🇧 **English version available!** The full course (8 lectures, Lab 0 + 7 labs, demo scripts) is translated into English: [lectures-EN (table of contents)](lectures-EN/README.md) · [labs-EN (table of contents)](labs-EN/README.md) · [demo scripts](lectures-EN/scripts/README.md). See also the [English index](#english-version) below.
 
 ## Wykłady
 
@@ -66,7 +66,7 @@ materials-about-MLOps/
 | 7 | [CI/CD for ML](lectures-EN/lecture_07_cicd_for_ml.md) | [lab_07](labs-EN/lab_07_cicd_github_actions.md) |
 | 8 | [Scalability and Security](lectures-EN/lecture_08_scalability_and_security.md) | – |
 
-Lecture demo scripts: [lectures-EN/scripts](lectures-EN/scripts/README.md).
+Detailed tables of contents: [lectures-EN/README.md](lectures-EN/README.md) · [labs-EN/README.md](labs-EN/README.md). Lecture demo scripts: [lectures-EN/scripts](lectures-EN/scripts/README.md).
 
 ### Projekt końcowy (równolegle)
 
