@@ -8,8 +8,10 @@ Repozytorium zawiera kompletne materiały dydaktyczne do przedmiotu **„MLOps i
 
 ```
 materials-about-MLOps/
-├── lectures/          # 8 wykładów (teoria + diagramy + przykłady)
-├── labs/              # 7 laboratoriów (ćwiczenia praktyczne)
+├── lectures-PL/       # 8 wykładów (teoria + diagramy + przykłady)
+├── lectures-EN/       # 8 lectures – English version
+├── labs-PL/           # 7 laboratoriów (ćwiczenia praktyczne)
+├── labs-EN/           # 7 labs – English version
 ├── project/           # materiały ścieżki projektowej
 ├── reports/           # miejsce na raporty/projekty studentów
 ├── SYLLABUS.md        # Program przedmiotu
@@ -18,6 +20,8 @@ materials-about-MLOps/
 ```
 
 ---
+
+> 🇬🇧 **English version:** [lectures-EN](lectures-EN/) · [labs-EN](labs-EN/) (see the [English index](#english-version) below).
 
 ## Wykłady
 
@@ -47,6 +51,22 @@ materials-about-MLOps/
 | 5 | Monitoring Modelu i Wykrywanie Dryfu | [lab_05](labs-PL/lab_05_monitoring_dryft.md) | Średni–Zaawansowany |
 | 6 | Budowanie ML Pipeline z Kubeflow Pipelines | [lab_06](labs-PL/lab_06_ml_pipeline_kfp.md) | Zaawansowany |
 | 7 | CI/CD dla ML z GitHub Actions | [lab_07](labs-PL/lab_07_cicd_github_actions.md) | Zaawansowany |
+
+### English version
+
+| # | Lecture | Lab |
+|---|---------|-----|
+| 0 | – | [00_virtual_machine_setup](labs-EN/00_virtual_machine_setup.md) |
+| 1 | [Introduction to MLOps](lectures-EN/lecture_01_introduction_to_mlops.md) | [lab_01](labs-EN/lab_01_environment_and_git.md) |
+| 2 | [Data Engineering](lectures-EN/lecture_02_data_engineering.md) | [lab_02](labs-EN/lab_02_mlflow_tracking.md) |
+| 3 | [Experimentation and Tracking](lectures-EN/lecture_03_experimentation_and_tracking.md) | [lab_03](labs-EN/lab_03_data_validation.md) |
+| 4 | [ML Pipelines](lectures-EN/lecture_04_ml_pipelines.md) | [lab_04](labs-EN/lab_04_rest_api_serving.md) |
+| 5 | [Model Serving](lectures-EN/lecture_05_model_serving.md) | [lab_05](labs-EN/lab_05_monitoring_drift.md) |
+| 6 | [Monitoring](lectures-EN/lecture_06_monitoring.md) | [lab_06](labs-EN/lab_06_ml_pipeline_kfp.md) |
+| 7 | [CI/CD for ML](lectures-EN/lecture_07_cicd_for_ml.md) | [lab_07](labs-EN/lab_07_cicd_github_actions.md) |
+| 8 | [Scalability and Security](lectures-EN/lecture_08_scalability_and_security.md) | – |
+
+Lecture demo scripts: [lectures-EN/scripts](lectures-EN/scripts/README.md).
 
 ### Projekt końcowy (równolegle)
 

@@ -211,5 +211,6 @@ syllabus/
 
 # Wyniki skryptów demonstracyjnych z wykładów
 lectures-PL/scripts/**/outputs/
+lectures-EN/scripts/**/outputs/
 mlruns/
 mlartifacts/
