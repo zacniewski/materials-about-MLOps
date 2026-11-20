@@ -53,7 +53,7 @@ Sprawdź na hoście, czy wirtualizacja jest włączona (Windows: Menedżer zada�
    - Pamięć: 8192 MB, Procesory: 4, Dysk: 50 GB (VDI, dynamicznie przydzielany).
 4. **Ustawienia → System → Procesor:** włącz PAE/NX; **Ekran:** pamięć wideo 128 MB, kontroler VMSVGA.
 5. **Ustawienia → Sieć → Karta 1:** NAT (domyślnie) – patrz część 4 (przekierowanie portów).
-6. Uruchom VM i zainstaluj Ubuntu („Normalna instalacja”, zaznacz aktualizacje i sterowniki firm trzecich). Użytkownik np. `student`.
+6. Uruchom VM i zainstaluj Ubuntu („Normalna instalacja”, zaznacz aktualizacje i sterowniki firm trzecich). Użytkownik np. `student` i hasło `student`.
 7. Po instalacji: menu VM **Urządzenia → Wstaw obraz płyty z dodatkami gościa** i w terminalu:
 
 ```bash
