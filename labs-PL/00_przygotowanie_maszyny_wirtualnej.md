@@ -63,6 +63,8 @@ sudo usermod -aG vboxsf $USER       # dostęp do folderów współdzielonych
 sudo reboot
 ```
 
+> Powyższe komendy mogą się różnić od wymaganych na danym OS, nalezy to zweryfikować w dokumentacji!  
+
 Dodatki gościa dają: dopasowanie rozdzielczości, współdzielony schowek (Urządzenia → Współdzielony schowek → Dwukierunkowy) i foldery współdzielone.
 
 ---

@@ -10,6 +10,8 @@
 
 Ten materiał opisuje **część projektową** kursu, która startuje na początku semestru i biegnie równolegle do części laboratoryjnej. Każde laboratorium dostarcza komponenty, które od razu wykorzystujesz w projekcie końcowym.
 
+> **Skrócona ścieżka na początek:** [checklista fazy 1](faza_1/CHECKLISTA_faza_1.md) oraz [szablon karty projektu](faza_1/KARTA_PROJEKTU.md) — gotowy kod startowy jest w [`labs-PL/starter-kit/mlops-project`](../labs-PL/starter-kit/mlops-project/README.md).
+
 ## Cel projektu
 
 Zbuduj **kompletny system MLOps** dla wybranego problemu ML, integrując wszystkie elementy poznane na zajęciach:

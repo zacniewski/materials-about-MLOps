@@ -1,0 +1,31 @@
+stages:
+  preprocess:
+    cmd: python src/data/preprocess.py
+    deps:
+      - src/data/preprocess.py
+      - data/raw/customers.parquet
+    params:
+      - params.yaml:
+          - data.test_size
+          - data.seed
+    outs:
+      - data/processed/train.parquet
+      - data/processed/test.parquet
+    metrics:
+      - reports/metrics/data_stats.json:
+          cache: false
+
+  train:
+    cmd: python src/models/train.py
+    deps:
+      - src/models/train.py
+      - data/processed/train.parquet
+    params:
+      - params.yaml:
+          - model
+          - features
+    outs:
+      - models/churn_model.pkl
+    metrics:
+      - reports/metrics/train_metrics.json:
+          cache: false

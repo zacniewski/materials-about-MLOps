@@ -1,6 +1,7 @@
 # Laboratorium 3: Walidacja Danych i Feature Store
 
 > ℹ️ **Środowisko:** laboratorium zakłada maszynę wirtualną Ubuntu 24.04 (VirtualBox) z Pythonem 3.12 i aktywnym środowiskiem `venv` z zależnościami z `requirements.txt` (m.in. `pandas`, `pyarrow`, `scipy`, `pytest`, `great-expectations` 1.x). Jeśli jeszcze go nie masz, zacznij od [Przygotowania maszyny wirtualnej](00_przygotowanie_maszyny_wirtualnej.md). Wszystkie polecenia uruchamiaj z **katalogu głównego projektu** z Lab 1 (tam, gdzie leżą `src/`, `data/` i `dvc.yaml`).
+> **Skrócona ścieżka zajęć:** [checklista Labs 1–3](CHECKLISTA_lab_01-03.md#laboratorium-3--walidacja-anomalia-i-prosty-feature-store-120-min) i [gotowy kod](starter-kit/mlops-project/README.md) (bez przepisywania).
 
 ## Informacje ogólne
 - **Czas:** 2 godziny

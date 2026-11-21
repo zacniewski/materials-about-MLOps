@@ -1,0 +1,9 @@
+# Włącz etap validate: scal zawartość stages.validate z dvc.yaml pod stages.
+validate:
+  cmd: python -m scripts.validate_data --input data/processed/train.parquet --report reports/validation.json
+  deps:
+    - scripts/validate_data.py
+    - src/data/validation.py
+    - data/processed/train.parquet
+  outs:
+    - reports/validation.json

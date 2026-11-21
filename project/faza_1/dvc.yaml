@@ -1,0 +1,51 @@
+# Skopiuj do katalogu głównego projektu po starter-kit; zachowaj starter-kit/params.yaml.
+stages:
+  preprocess:
+    cmd: python src/data/preprocess.py
+    deps:
+      - src/data/preprocess.py
+      - data/raw/customers.parquet
+    params:
+      - params.yaml:
+          - data.test_size
+          - data.seed
+    outs:
+      - data/processed/train.parquet
+      - data/processed/test.parquet
+    metrics:
+      - reports/metrics/data_stats.json:
+          cache: false
+
+  validate:
+    cmd: python -m scripts.validate_data --input data/processed/train.parquet --report reports/validation.json
+    deps:
+      - scripts/validate_data.py
+      - src/data/validation.py
+      - data/processed/train.parquet
+    outs:
+      - reports/validation.json
+
+  train:
+    cmd: python src/models/train.py
+    deps:
+      - src/models/train.py
+      - data/processed/train.parquet
+      - reports/validation.json
+    params:
+      - params.yaml:
+          - model
+          - features
+    outs:
+      - models/churn_model.pkl
+    metrics:
+      - reports/metrics/train_metrics.json:
+          cache: false
+
+  evaluate:
+    cmd: python scripts/evaluate_model.py --model models/churn_model.pkl --test data/processed/test.parquet --output reports/evaluation_metrics.json --min-roc-auc 0.70
+    deps:
+      - scripts/evaluate_model.py
+      - models/churn_model.pkl
+      - data/processed/test.parquet
+    outs:
+      - reports/evaluation_metrics.json

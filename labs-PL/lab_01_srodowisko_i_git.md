@@ -1,6 +1,7 @@
 # Laboratorium 1: Środowisko MLOps i Wersjonowanie Kodu
 
 > ℹ️ **Zanim zaczniesz:** przygotuj maszynę wirtualną Ubuntu 24.04 zgodnie z instrukcją [00_przygotowanie_maszyny_wirtualnej.md](00_przygotowanie_maszyny_wirtualnej.md). Wszystkie polecenia w tym laboratorium zakładają Ubuntu 24.04, Python 3.12 i powłokę `bash`.
+> **Skrócona ścieżka zajęć:** [checklista Labs 1–3](CHECKLISTA_lab_01-03.md#laboratorium-1--środowisko-git-dvc-i-pierwszy-pipeline-120-min) i [gotowy kod](starter-kit/mlops-project/README.md) (bez przepisywania).
 
 ## Informacje ogólne
 - **Czas:** 2 godziny
@@ -66,10 +67,10 @@ python3 --version  # Linux/Mac
 # python --version  # Windows
 
 # Utwórz wirtualne środowisko
-python3 -m venv mlops-env  # Linux/Mac
-# python -m venv mlops-env  # Windows
-source mlops-env/bin/activate  # Linux/Mac
-# mlops-env\Scripts\activate   # Windows
+python3 -m venv .venv  # Linux/Mac
+# python -m venv .venv  # Windows
+source .venv/bin/activate  # Linux/Mac
+# .venv\Scripts\activate   # Windows
 
 # Zainstaluj podstawowe narzędzia
 pip install --upgrade pip
@@ -169,7 +170,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
-mlops-env/
+.venv/
 *.pyc
 
 # Dane i modele: NIE ignorujemy tu katalogów data/ ani models/ —
@@ -829,7 +830,7 @@ git commit -m "test: add unit tests for preprocessing"
 | `dvc add` zgłasza błąd | DVC nie jest zainicjalizowany | Uruchom `dvc init` w katalogu z repozytorium Git |
 | `bad DVC file name '...dvc' is git-ignored` | `.gitignore` ignoruje cały katalog (np. `data/raw/`) | Usuń taki wpis — DVC sam dopisze plik danych do `data/raw/.gitignore` |
 | `The virtual environment was not created successfully because ensurepip is not available` | Brak pakietu `python3-venv` w Ubuntu | `sudo apt install -y python3-venv` |
-| `error: externally-managed-environment` | `pip install` poza venv (PEP 668, Ubuntu 24.04) | Aktywuj venv: `source mlops-env/bin/activate` |
+| `error: externally-managed-environment` | `pip install` poza venv (PEP 668, Ubuntu 24.04) | Aktywuj venv: `source .venv/bin/activate` |
 | `ImportError: Unable to find a usable engine ... pyarrow` | Brak biblioteki do Parquet | `pip install "pyarrow>=17,<19"` |
 | `pip` kompiluje numpy/scikit-learn i kończy się błędem | Przypięte stare wersje bez wheels dla Pythona 3.12 | Użyj zakresów z `requirements.txt` kursu |
 | `dvc checkout` → `Checkout failed ... Is your cache up to date?` | Etapy z `dvc.yaml` nie były jeszcze uruchomione | `dvc checkout <plik>.dvc` lub najpierw `dvc repro` |

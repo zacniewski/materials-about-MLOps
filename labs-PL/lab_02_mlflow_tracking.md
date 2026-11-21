@@ -1,6 +1,7 @@
 # Laboratorium 2: Śledzenie Eksperymentów z MLflow
 
 > ℹ️ **Zanim zaczniesz:** przygotuj maszynę wirtualną Ubuntu 24.04 zgodnie z instrukcją [00_przygotowanie_maszyny_wirtualnej.md](00_przygotowanie_maszyny_wirtualnej.md) i ukończ [Laboratorium 1](lab_01_srodowisko_i_git.md) (potrzebne są pliki `data/processed/train.parquet` i `test.parquet` utworzone przez `dvc repro`). Przykłady sprawdzono z MLflow 2.x (`mlflow>=2.15,<3.0` z `requirements.txt`).
+> **Skrócona ścieżka zajęć:** [checklista Labs 1–3](CHECKLISTA_lab_01-03.md#laboratorium-2--mlflow-tracking-i-porównanie-runów-120-min) i [gotowy kod](starter-kit/mlops-project/README.md) (bez przepisywania).
 
 ## Informacje ogólne
 - **Czas:** 2 godziny

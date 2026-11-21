@@ -1,0 +1,22 @@
+model:
+  n_estimators: 100
+  max_depth: 8
+  min_samples_split: 10
+  random_state: 42
+
+data:
+  test_size: 0.2
+  seed: 42
+
+features:
+  - age
+  - income
+  - tenure_months
+  - num_products
+  - has_credit_card
+  - is_active
+  - balance
+  - num_transactions_30d
+  - income_per_age
+  - balance_per_product
+  - is_long_tenure
