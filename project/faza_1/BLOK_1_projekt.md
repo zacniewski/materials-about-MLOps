@@ -36,6 +36,8 @@ Po tej części zespół ma uzgodnioną kartę projektu, wykonalny zakres fazy 1
 | 160–175 | Zapiszcie ograniczenia, wynik baseline'u, najbliższe zadanie i jego właściciela. | Aktualizujcie `KARTA_PROJEKTU.md` oraz README projektu; Git ma zawierać kod, konfigurację i wskaźniki, nie surowe dane/model. | Każdy członek zespołu zna następny krok i ryzyko. |
 | 175–180 | Sprawdźcie kryteria gotowości i zatrzymajcie lokalny serwer MLflow, jeśli był uruchomiony. | `Ctrl+C` w terminalu serwera. | Karta i wynik są zapisane, serwer zatrzymany. |
 
+**Uwaga do wiersza „10–25”:** „Wybierzcie A lub B” to decyzja ze ścieżki danych opisanej wyżej w sekcji „Wybór danych — ograniczcie ryzyko” (A — syntetyczny churn, domyślnie; B — własne, gotowe dane). „Nazwijcie problem i użytkownika” oznacza krótkie, jednozdaniowe sformułowania: problem — jaki konkretny problem rozwiązuje projekt (np. „przewidzieć, którzy klienci odejdą w ciągu 30 dni”), użytkownik — kto skorzysta z wyników modelu (np. „zespół utrzymania klienta”). „Jedna decyzja, którą ma wspierać model” to konkretne zastosowanie predykcji w jednej akcji (np. „czy wysłać klientowi ofertę retencyjną”) — model nie ma istnieć „w próżni” bez jasnego celu, co ułatwia później dobór metryki i zakresu (out-of-scope). Te ustalenia zapisujecie w `KARTA_PROJEKTU.md`, zgodnie z „Oczekiwanym wynikiem” w tym wierszu tabeli.
+
 ### Krok 0 — nowa kopia projektu (minuty 0–10)
 
 Wykonuje właściciel pipeline'u w terminalu VM, z aktywnym venv. Zamieńcie `projekt-ZESPOL` na nazwę zespołu. Jeśli katalog już istnieje, **nie kopiujcie ponownie** — przejdźcie tylko do niego (`cd`).
