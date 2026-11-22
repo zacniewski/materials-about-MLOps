@@ -38,8 +38,9 @@ flowchart LR
         S[skrypt Python<br/>mlflow.log_*] -- HTTP :5000 --> T[mlflow server]
         T --> DB[(mlflow.db<br/>SQLite: parametry,<br/>metryki, rejestr)]
         T --> A[(./mlartifacts<br/>wykresy, modele)]
+        B[Firefox w VM] -- http://127.0.0.1:5000 --> T
     end
-    B[Przeglądarka na hoście] -- port forwarding<br/>127.0.0.1:5000 --> T
+    H[Przeglądarka na hoście<br/>opcjonalnie] -- tunel SSH<br/>-L 5000:127.0.0.1:5000 --> T
 ```
 
 - **Backend store** (SQLite/PostgreSQL) przechowuje metadane. Model Registry wymaga backendu bazodanowego — dlatego `sqlite:///mlflow.db`, a nie katalog plików.
@@ -66,30 +67,30 @@ cd mlops-project
 mlflow server \
     --backend-store-uri sqlite:///mlflow.db \
     --artifacts-destination ./mlartifacts \
-    --host 0.0.0.0 \
+    --host 127.0.0.1 \
     --port 5000
 
 # W drugim terminalu: sprawdź czy działa (oczekiwana odpowiedź: OK)
-curl http://localhost:5000/health
-# Otwórz w przeglądarce: http://localhost:5000
+curl http://127.0.0.1:5000/health
+# Otwórz w Firefoksie w VM: http://127.0.0.1:5000
 ```
 
-> 💡 `--host 0.0.0.0` oznacza nasłuchiwanie na wszystkich interfejsach sieciowych VM — jest potrzebne, aby UI było dostępne z przeglądarki na komputerze-hoście. Przy domyślnym `127.0.0.1` serwer jest widoczny tylko wewnątrz VM. Nie wystawiaj tak serwera w sieci publicznej — MLflow domyślnie nie ma uwierzytelniania.
+> 💡 W całym kursie serwer MLflow nasłuchuje **tylko na `127.0.0.1`**, a UI otwieramy w Firefoksie **wewnątrz VM**. Serwer nie jest wtedy widoczny z żadnej sieci — to ważne, bo MLflow domyślnie nie ma uwierzytelniania. Używamy `127.0.0.1`, a nie `localhost`, bo `localhost` bywa rozwiązywany na IPv6 (`::1`), na którym serwer nie nasłuchuje.
 
-**Dostęp z hosta (VirtualBox, karta sieciowa NAT):** *Ustawienia VM → Sieć → Karta 1 (NAT) → Zaawansowane → Przekierowanie portów* i dodaj regułę: protokół TCP, port hosta `5000`, port gościa `5000` (IP można zostawić puste). Albo z terminala hosta (VM wyłączona):
+**Opcjonalnie — UI w przeglądarce hosta:** nie zmieniaj `--host`. Użyj tunelu SSH (wymaga SSH i reguły NAT 2222 → 22 z [Lab 0, część 4](00_przygotowanie_maszyny_wirtualnej.md)). Na hoście uruchom i zostaw otwarte:
 
 ```bash
-VBoxManage modifyvm "nazwa-VM" --natpf1 "mlflow,tcp,,5000,,5000"
+ssh -p 2222 -N -L 5000:127.0.0.1:5000 student@127.0.0.1
 ```
 
-Następnie na hoście otwórz `http://localhost:5000`. Jeśli port 5000 jest zajęty (np. na macOS przez AirPlay Receiver), użyj `--port 5001` i takiego samego przekierowania. Jeśli w VM działa zapora `ufw`: `sudo ufw allow 5000/tcp`.
+Następnie na hoście otwórz `http://127.0.0.1:5000`. Samo przekierowanie portu 5000 w VirtualBoxie **nie zadziała** z serwerem na `127.0.0.1` — NAT dostarcza ruch na zewnętrzny interfejs VM, a nie na jej pętlę zwrotną. Jeśli port 5000 na hoście jest zajęty (np. na macOS przez AirPlay Receiver), użyj `-L 5001:127.0.0.1:5000` i otwórz `http://127.0.0.1:5001`.
 
 ### Krok 1.2: Konfiguracja klienta MLflow
 
 Adres serwera można podać w kodzie (`mlflow.set_tracking_uri`) albo zmienną środowiskową — ta druga opcja pozwala uruchamiać ten sam kod lokalnie i w CI bez zmian:
 
 ```bash
-export MLFLOW_TRACKING_URI=http://localhost:5000
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
 ```
 
 Pomocnicza funkcja (opcjonalna — skrypty poniżej ustawiają URI samodzielnie):
@@ -99,7 +100,7 @@ Pomocnicza funkcja (opcjonalna — skrypty poniżej ustawiają URI samodzielnie)
 import mlflow
 
 def setup_mlflow(
-    tracking_uri: str = "http://localhost:5000",
+    tracking_uri: str = "http://127.0.0.1:5000",
     experiment_name: str = "churn-prediction"
 ) -> str:
     """Konfiguruje MLflow i zwraca ID eksperymentu."""
@@ -159,7 +160,7 @@ from sklearn.metrics import (
 )
 
 # Konfiguracja MLflow (zmienna MLFLOW_TRACKING_URI ma pierwszeństwo)
-mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000"))
+mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000"))
 mlflow.set_experiment("churn-prediction")
 
 FEATURE_COLS = [
@@ -377,7 +378,7 @@ print(f"\nNajlepszy model: {results_df.iloc[0]['name']} (AUC={results_df.iloc[0]
 python scripts/run_experiments.py
 
 # Otwórz MLflow UI i porównaj wyniki
-# http://localhost:5000
+# http://127.0.0.1:5000
 ```
 
 > ⏱️ Na VM z 2 vCPU i 50 tys. wierszy całość (6 modeli × trening + 5-krotna CV) trwa kilka minut; najdłużej `GBM-tuned`. Aby przyspieszyć, wygeneruj mniejszy zbiór w Lab 1 albo zmniejsz `cv=5` do `cv=3`.
@@ -408,7 +409,7 @@ flowchart LR
 import mlflow
 from mlflow.tracking import MlflowClient
 
-mlflow.set_tracking_uri("http://localhost:5000")
+mlflow.set_tracking_uri("http://127.0.0.1:5000")
 client = MlflowClient()
 
 MODEL_NAME = "churn-randomforestclassifier"
@@ -521,7 +522,7 @@ Alias to nazwana, przesuwalna etykieta (np. `champion`) wskazująca konkretną w
 import mlflow
 from mlflow import MlflowClient
 
-mlflow.set_tracking_uri("http://localhost:5000")
+mlflow.set_tracking_uri("http://127.0.0.1:5000")
 client = MlflowClient()
 
 MODEL_NAME = "churn-randomforestclassifier"
@@ -563,7 +564,7 @@ matplotlib.use('Agg')  # musi być wywołane PRZED importem pyplot
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-mlflow.set_tracking_uri("http://localhost:5000")
+mlflow.set_tracking_uri("http://127.0.0.1:5000")
 client = mlflow.tracking.MlflowClient()
 
 def get_experiment_results(experiment_name: str) -> pd.DataFrame:
@@ -646,8 +647,9 @@ python scripts/compare_experiments.py
 |---------|-----------|-------------|
 | `ConnectionRefusedError` przy logowaniu | Serwer MLflow nie jest uruchomiony | Uruchom `mlflow server` w osobnym terminalu |
 | `ImportError: cannot import name 'FallbackAsyncAdaptedQueuePool' from 'sqlalchemy.pool'` | MLflow 2.x z SQLAlchemy 2.1 | `pip install "sqlalchemy<2.1"` |
-| UI działa w VM, ale nie na hoście | Serwer słucha na `127.0.0.1` lub brak przekierowania portu | Startuj z `--host 0.0.0.0`; dodaj regułę NAT port forwarding 5000→5000 w VirtualBox; sprawdź `sudo ufw status` |
-| `[ERROR] Connection in use: ('0.0.0.0', 5000)` | Port zajęty (np. stary serwer w tle) | `ss -ltnp \| grep 5000`, zakończ proces (`kill <PID>`) lub użyj `--port 5001` |
+| UI działa w VM, ale nie na hoście | Serwer celowo słucha tylko na `127.0.0.1`; przekierowanie NAT 5000→5000 tu nie pomoże | Otwieraj UI w Firefoksie w VM albo użyj tunelu SSH z Kroku 1.1 (`ssh -p 2222 -N -L 5000:127.0.0.1:5000 student@127.0.0.1`). Nie zmieniaj `--host` na `0.0.0.0` |
+| `[ERROR] Connection in use: ('127.0.0.1', 5000)` | Port zajęty (np. stary serwer w tle) | `ss -ltnp \| grep 5000`, zakończ proces (`kill <PID>`) lub użyj `--port 5001` i `MLFLOW_TRACKING_URI=http://127.0.0.1:5001` |
+| `curl http://localhost:5000` nie odpowiada, a `127.0.0.1` tak | `localhost` rozwiązany na IPv6 `::1` | Używaj zawsze `http://127.0.0.1:5000` |
 | `FutureWarning: ... transition_model_version_stage is deprecated` | Stages są przestarzałe od MLflow 2.9 | Ostrzeżenie można zignorować; docelowo użyj aliasów (Krok 3.2) |
 | `UserWarning: Hint: Inferred schema contains integer column(s)` przy `log_model` | Sygnatura wyznaczona z `input_example` z kolumnami `int` | Tylko informacja; w produkcji rzutuj cechy na `float`, jeśli mogą mieć braki |
 | `UndefinedMetricWarning` / `F1 = 0.0` | Model nie przewiduje klasy 1 przy progu 0.5 (niezbalansowane dane) | `zero_division=0`, `class_weight="balanced"` lub zmiana progu |

@@ -1,5 +1,7 @@
 # Checklista zajęć: laboratoria 1–3
 
+> **Układ 3 × (3 h laboratorium + 3 h projektu):** na pierwszy blok obowiązuje skondensowana checklista [`BLOK_1_laboratorium.md`](BLOK_1_laboratorium.md) (180 min). Poniższe plany laboratoriów 1–3 po 120 min są materiałem szczegółowym i referencyjnym, a nie harmonogramem pierwszego bloku.
+
 Plan zakłada **120 minut na laboratorium** i gotowy starter kit. Studenci pracują w parach, a nie przepisują kodu. Każdy punkt oznaczony **minimum na zajęciach** daje działający, sprawdzalny rezultat; rozszerzenia są pracą domową lub dodatkiem dla szybszych zespołów.
 
 ## Przed pierwszymi zajęciami (prowadzący / studenci, poza czasem laboratorium)

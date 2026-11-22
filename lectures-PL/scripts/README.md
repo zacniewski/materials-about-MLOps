@@ -67,7 +67,7 @@ python lectures/scripts/lecture_03/01_mlflow_experiments.py
 python lectures/scripts/lecture_03/02_compare_runs.py           # po 01
 python lectures/scripts/lecture_03/03_hyperparameter_tuning.py --trials 15
 python lectures/scripts/lecture_03/04_reproducibility.py
-mlflow ui --port 5000                                            # → http://localhost:5000
+mlflow ui --host 127.0.0.1 --port 5000                                            # → http://127.0.0.1:5000
 ```
 
 Domyślnie skrypty zapisują runy lokalnie w `./mlruns`. Żeby użyć serwera MLflow:

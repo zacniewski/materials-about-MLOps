@@ -1,5 +1,7 @@
 # Checklista projektu — faza 1: problem, dane i baseline
 
+> **Układ 3 × (3 h laboratorium + 3 h projektu):** na pierwszy blok obowiązuje skondensowana checklista [`BLOK_1_projekt.md`](BLOK_1_projekt.md) (180 min) i ściągawka [`BLOK_1_SCIAGA_projekt.md`](BLOK_1_SCIAGA_projekt.md). Poniższy kickoff 120 min jest materiałem szczegółowym i referencyjnym, a nie harmonogramem pierwszego bloku.
+
 **Cel:** w ograniczonym czasie uzgodnić mały, wykonalny problem i uruchomić powtarzalny baseline z kontrolą danych. Faza 1 **nie** wymaga jeszcze API, kontenera, chmury, orkiestracji ani monitoringu produkcyjnego.
 
 ## Przed kickoffem (praca własna, 20–30 min)

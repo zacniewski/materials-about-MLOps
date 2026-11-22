@@ -4,12 +4,12 @@ Trenuje kilka modeli z różnymi hiperparametrami i loguje do MLflow:
 parametry, metryki (w tym CV), tagi, wykres (artefakt), raport i model.
 
 Domyślnie zapisuje runy lokalnie (katalog ./mlruns). Aby użyć serwera:
-    mlflow ui --port 5000                      # w osobnym terminalu
-    export MLFLOW_TRACKING_URI=http://localhost:5000
+    mlflow ui --host 127.0.0.1 --port 5000                      # w osobnym terminalu
+    export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
 
 Uruchomienie:
     python lectures/scripts/lecture_03/01_mlflow_experiments.py
-    mlflow ui                                   # → http://localhost:5000
+    mlflow ui                                   # → http://127.0.0.1:5000
 """
 
 import json
@@ -98,7 +98,7 @@ def main() -> None:
     results = {name: run_experiment(cls, params, name) for cls, params, name in configs}
     best = max(results, key=lambda k: results[k]["roc_auc"])
     print(f"\n🏆 Najlepszy run: {best} (roc_auc={results[best]['roc_auc']:.4f})")
-    print("👉 Uruchom `mlflow ui` i otwórz http://localhost:5000, aby porównać runy.")
+    print("👉 Uruchom `mlflow ui` i otwórz http://127.0.0.1:5000, aby porównać runy.")
 
 
 if __name__ == "__main__":

@@ -708,7 +708,7 @@ dvc status
 dvc dag  # wizualizacja DAG
 
 # Sprawdź logi MLflow
-mlflow ui  # http://localhost:5000
+mlflow ui  # http://127.0.0.1:5000
 
 # Sprawdź logi Docker
 docker logs churn-api --tail 50

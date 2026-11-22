@@ -9,12 +9,15 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+python scripts/check_env.py
 python scripts/generate_data.py --n-samples 10000
 git init
 dvc init
 dvc add data/raw/customers.parquet
 dvc repro
 ```
+
+Na VM kursu (Ubuntu 24.04) używajcie wspólnego venv z repozytorium kursu (`source ~/mlops/materials-about-MLOps/.venv/bin/activate`) — szczegóły w `labs-PL/BLOK_1_PRZED_ZAJECIAMI.md`. `scripts/check_env.py` sprawdza Pythona, venv, wersje pakietów z `requirements.txt`, Git, DVC i wolny port MLflow; każde `[BŁĄD]` ma podpowiedź naprawy.
 
 Jeśli Git wymaga konfiguracji autora, ustaw lokalne `user.name` i `user.email`. Dodaj do Git kod, konfigurację, pliki `*.dvc`, `dvc.yaml`, `dvc.lock` i `.gitignore`; nie dodawaj danych ani plików modelu bezpośrednio. DVC przechowuje ich zawartość w cache lokalnym.
 
@@ -28,6 +31,7 @@ Jeśli Git wymaga konfiguracji autora, ustaw lokalne `user.name` i `user.email`.
 | Jakość danych | `src/data/validation.py`, `src/data/anomaly_detection.py`, `scripts/validate_data.py`, `scripts/validate_gx.py` | reguły jakości, IQR i opcjonalne ćwiczenie Great Expectations |
 | Cechy | `src/features/feature_store.py` | offline feature store Parquet z rejestrem JSON |
 | Sprawdzenie postępu | `scripts/check_progress.py` | lista brakujących artefaktów Labs 1–3 |
+| Kontrola środowiska | `scripts/check_env.py` | gotowość venv, pakietów, Git/DVC i portu MLflow przed zajęciami |
 
 ## Laboratorium 1
 

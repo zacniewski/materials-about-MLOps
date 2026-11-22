@@ -18,7 +18,7 @@ Skrypty demonstracyjne znajdują się w ``. Pełną instrukcję znajdziesz w [``
 | 6. Optuna | `03_hyperparameter_tuning.py --trials 15` | HPO z zagnieżdżonymi runami |
 | 8 i 10. Reprodukowalność, pułapki | `04_reproducibility.py` | seed, commit git, hash danych, run FAILED |
 
-**Jak:** przed wykładem uruchom `rm -rf mlruns`, żeby zacząć od pustego trackingu. Następnie uruchamiaj skrypty z katalogu głównego repozytorium (`python lectures/scripts/lecture_03/<skrypt>`). W drugim terminalu uruchom `mlflow ui --port 5000` i po każdym skrypcie pokazuj wyniki w przeglądarce (http://localhost:5000). Domyślnie skrypty zapisują runy w `./mlruns`. Żeby użyć serwera, ustaw `MLFLOW_TRACKING_URI`.
+**Jak:** przed wykładem uruchom `rm -rf mlruns`, żeby zacząć od pustego trackingu. Następnie uruchamiaj skrypty z katalogu głównego repozytorium (`python lectures/scripts/lecture_03/<skrypt>`). W drugim terminalu uruchom `mlflow ui --host 127.0.0.1 --port 5000` i po każdym skrypcie pokazuj wyniki w przeglądarce (http://127.0.0.1:5000). Domyślnie skrypty zapisują runy w `./mlruns`. Żeby użyć serwera, ustaw `MLFLOW_TRACKING_URI`.
 
 ---
 
@@ -148,7 +148,7 @@ graph TB
 ```bash
 pip install mlflow scikit-learn pandas
 
-# Uruchomienie UI (domyślnie http://localhost:5000)
+# Uruchomienie UI (domyślnie http://127.0.0.1:5000)
 mlflow ui
 ```
 
@@ -179,7 +179,7 @@ flowchart LR
 mlflow server \
   --backend-store-uri postgresql://mlflow:haslo@db:5432/mlflow \
   --artifacts-destination s3://ml-artifacts \
-  --host 0.0.0.0 --port 5000
+  --host 0.0.0.0 --port 5000   # tylko serwer zespołowy za reverse proxy; na zajęciach w VM: --host 127.0.0.1
 
 # Klient wskazuje serwer przez zmienną środowiskową
 export MLFLOW_TRACKING_URI=http://mlflow.firma.local:5000
@@ -300,7 +300,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # Konfiguracja MLflow
-mlflow.set_tracking_uri("http://localhost:5000")
+mlflow.set_tracking_uri("http://127.0.0.1:5000")
 mlflow.set_experiment("churn-prediction-v1")
 
 def evaluate_model(model, X_test, y_test) -> dict:

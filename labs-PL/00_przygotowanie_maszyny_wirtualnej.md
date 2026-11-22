@@ -16,8 +16,8 @@
 
 ```
 ┌──────────────────────── HOST (Windows / macOS / Linux) ───────────────────────┐
-│  przeglądarka: http://localhost:5000 (MLflow), :8000 (API), :8080 (KFP UI) ... │
-│        │  port forwarding (NAT)                                               │
+│  przeglądarka: :8000 (API), :8080 (KFP UI) ...; MLflow tylko tunelem SSH      │
+│        │  port forwarding (NAT) / tunel SSH                                   │
 │  ┌─────▼──────────────────── VirtualBox: VM Ubuntu 24.04 ───────────────────┐ │
 │  │  venv (Python 3.12) ── MLflow, DVC, FastAPI, Evidently, pytest, kfp      │ │
 │  │  Docker Engine ── kontenery API, Prometheus, Grafana                     │ │
@@ -77,31 +77,31 @@ Zanim zaczniesz instalować narzędzia: VM wyłączona → **Maszyna → Narzęd
 
 ## Część 4: Sieć – dostęp do usług z przeglądarki hosta
 
-Usługi uruchamiane w laboratoriach muszą nasłuchiwać na **`0.0.0.0`** (nie tylko `127.0.0.1`), jeśli chcesz je otwierać z hosta. Masz dwie możliwości:
+> **MLflow — jedna zasada dla całego kursu:** serwer MLflow uruchamiamy zawsze z `--host 127.0.0.1 --port 5000`, klienta konfigurujemy przez `MLFLOW_TRACKING_URI=http://127.0.0.1:5000`, a UI otwieramy w **Firefoksie wewnątrz VM** pod `http://127.0.0.1:5000`. MLflow nie ma domyślnie uwierzytelniania, więc nie wystawiamy go na `0.0.0.0`. Kto koniecznie chce UI w przeglądarce hosta, używa **tunelu SSH** (koniec tej części) — samo przekierowanie portu 5000 w VirtualBoxie nie zadziała z serwerem na `127.0.0.1`.
+
+Pozostałe usługi (API, KFP UI, Prometheus, Grafana) muszą nasłuchiwać na **`0.0.0.0`** (nie tylko `127.0.0.1`), jeśli chcesz je otwierać z hosta. Masz dwie możliwości:
 
 **A) NAT + przekierowanie portów** (Ustawienia → Sieć → Zaawansowane → Przekierowanie portów):
 
 | Nazwa | Port hosta | Port gościa | Do czego (lab) |
 |---|---|---|---|
 | ssh | 2222 | 22 | praca z IDE/terminala hosta |
-| mlflow | 5000 | 5000 | MLflow UI (lab 2) |
 | api | 8000 | 8000 | FastAPI (lab 4, 5) |
 | kfp | 8080 | 8080 | Kubeflow Pipelines UI (lab 6) |
 | prometheus | 9090 | 9090 | Prometheus (lab 5) |
 | grafana | 3000 | 3000 | Grafana (lab 5) |
 | jupyter | 8888 | 8888 | Jupyter (opcjonalnie) |
 
-**B) Druga karta „Sieć izolowana hosta” (Host-only)** – VM dostaje adres np. `192.168.56.101` (`ip a`), a z hosta otwierasz `http://192.168.56.101:5000` bez konfigurowania każdego portu.
+**B) Druga karta „Sieć izolowana hosta” (Host-only)** – VM dostaje adres np. `192.168.56.101` (`ip a`), a z hosta otwierasz `http://192.168.56.101:8000` bez konfigurowania każdego portu.
 
 Przykłady uruchamiania z dostępem z hosta:
 
 ```bash
-mlflow ui --host 0.0.0.0 --port 5000
 uvicorn src.serving.app:app --host 0.0.0.0 --port 8000
 kubectl port-forward --address 0.0.0.0 -n kubeflow svc/ml-pipeline-ui 8080:80
 ```
 
-> Najprościej jednak pracować bezpośrednio w przeglądarce **wewnątrz** VM (Ubuntu Desktop ma Firefoksa) – wtedy wystarczy `localhost`.
+> Najprościej jednak pracować bezpośrednio w przeglądarce **wewnątrz** VM (Ubuntu Desktop ma Firefoksa) – wtedy wystarczy `127.0.0.1` i nie trzeba niczego przekierowywać.
 
 ### Praca przez SSH (opcjonalnie, polecane)
 
@@ -112,7 +112,12 @@ sudo apt install -y openssh-server && sudo systemctl enable --now ssh
 ssh -p 2222 student@localhost
 ```
 
-PyCharm (Professional) potrafi użyć interpretera przez SSH (*Settings → Python Interpreter → Add → On SSH*), a wersja Community – pracować na folderze współdzielonym. Dodatkowo tunel SSH zastępuje przekierowanie portów: `ssh -p 2222 -L 5000:localhost:5000 student@localhost`.
+PyCharm (Professional) potrafi użyć interpretera przez SSH (*Settings → Python Interpreter → Add → On SSH*), a wersja Community – pracować na folderze współdzielonym. Dodatkowo tunel SSH zastępuje przekierowanie portów i działa z usługami na `127.0.0.1` — to jedyny zalecany sposób na UI MLflow w przeglądarce hosta:
+
+```bash
+# na hoście; zostaw okno otwarte, potem otwórz http://127.0.0.1:5000
+ssh -p 2222 -N -L 5000:127.0.0.1:5000 student@127.0.0.1
+```
 
 ---
 
@@ -231,8 +236,10 @@ Następnie szybki test na skryptach z wykładów:
 
 ```bash
 cd ~/mlops/materials-about-MLOps
-python lectures/scripts/lecture_01/01_reproducibility.py
+python lectures-PL/scripts/lecture_01/01_reproducibility.py
 ```
+
+Przed pierwszym blokiem zajęć wykonaj też krótką listę z [`BLOK_1_PRZED_ZAJECIAMI.md`](BLOK_1_PRZED_ZAJECIAMI.md) (kopie robocze starter kitu i `scripts/check_env.py`).
 
 Na koniec: wyłącz VM i zrób migawkę **`01-srodowisko-mlops`**.
 
@@ -263,14 +270,15 @@ Dobra praktyka: przed każdym laboratorium `cd ~/mlops/materials-about-MLOps && 
 | `error: externally-managed-environment` | `pip` poza venv (PEP 668) | `source .venv/bin/activate` |
 | `ensurepip is not available` | Brak pakietu venv | `sudo apt install python3-venv` |
 | `permission denied ... docker.sock` | Użytkownik nie w grupie `docker` | `sudo usermod -aG docker $USER`, wyloguj się/`newgrp docker` |
-| Z hosta nie działa `localhost:5000` | Usługa na 127.0.0.1 lub brak przekierowania | `--host 0.0.0.0` + reguła NAT (część 4) |
+| Z hosta nie działa UI MLflow (`127.0.0.1:5000`) | MLflow celowo słucha tylko na `127.0.0.1` w VM | Firefox w VM albo tunel SSH `-L 5000:127.0.0.1:5000` (część 4); nie zmieniaj `--host` na `0.0.0.0` |
+| Z hosta nie działa API (`localhost:8000`) | Usługa na 127.0.0.1 lub brak przekierowania | `--host 0.0.0.0` + reguła NAT (część 4) |
 | `kind create cluster` się zawiesza / pody `Pending` | Za mało RAM/CPU | Zwiększ VM do 8 GB / 4 vCPU, zamknij inne kontenery |
 | Brak miejsca na dysku | Obrazy Dockera, cache pip | `docker system prune -a`, `pip cache purge`; powiększ VDI w Menedżerze nośników + `sudo growpart`/`resize2fs` (lub GParted) |
 | Błędy uprawnień w folderze współdzielonym, wolne `git`/`dvc` | `vboxsf` nie wspiera dobrze symlinków i jest wolny | Trzymaj projekt na dysku VM (`~/mlops`), folder współdzielony tylko do wymiany plików |
 | Zły czas w VM → błędy TLS/`git pull` | Rozjechany zegar po wstrzymaniu VM | `sudo timedatectl set-ntp true` |
 
 ## Pytania kontrolne
-1. Dlaczego usługi w VM powinny nasłuchiwać na `0.0.0.0`, jeśli chcemy je otwierać z hosta?
+1. Dlaczego API w VM musi nasłuchiwać na `0.0.0.0`, żeby działało przekierowanie portu, a MLflow uruchamiamy na `127.0.0.1` i ewentualnie używamy tunelu SSH?
 2. Czym różni się sieć NAT z przekierowaniem portów od karty Host-only?
 3. Po co tworzyć migawki VM i kiedy warto je robić?
 4. Dlaczego w Ubuntu 24.04 instalujemy pakiety Pythona w `venv`, a nie globalnie?
